@@ -28,9 +28,10 @@ type block struct {
 	//entries    []*entry
 }
 
+/*
 func createBlock() *block {
 	return &block{
-		tree:      merkle.newTree(),
+		tree:      merkle.NewTree(),
 		timestamp: time.Now(),
 	}
 }
@@ -58,3 +59,4 @@ func (b *block) add(data []byte) error {
 func (b *block) validate() (bool, error) {
 
 }
+*/
