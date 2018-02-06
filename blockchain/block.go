@@ -18,7 +18,6 @@ type block struct {
 	currSize uint32
 
 	prevHash []byte
-	nonce    []byte
 
 	tree *merkle.Tree
 
@@ -28,12 +27,15 @@ type block struct {
 	//entries    []*entry
 }
 
-/*
 func createBlock() *block {
 	return &block{
 		tree:      merkle.NewTree(),
 		timestamp: time.Now(),
 	}
+}
+
+func formBlock(data []byte) *block {
+	return &block{}
 }
 
 func (b *block) add(data []byte) error {
@@ -46,7 +48,7 @@ func (b *block) add(data []byte) error {
 		return errFullBlock
 	}
 
-	err := b.tree.Add(e.data)
+	err := b.tree.Add(data)
 	if err != nil {
 		return err
 	}
@@ -55,8 +57,3 @@ func (b *block) add(data []byte) error {
 
 	return nil
 }
-
-func (b *block) validate() (bool, error) {
-
-}
-*/

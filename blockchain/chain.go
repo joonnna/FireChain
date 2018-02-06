@@ -2,7 +2,6 @@ package blockchain
 
 import (
 	"errors"
-	"sync"
 )
 
 var (
@@ -13,8 +12,16 @@ type chain struct {
 	blocks    map[uint64]*block
 	currBlock uint64
 
-	data      []int32
-	dataMutex sync.RWMutex
+	peerMap map[string]*peer
+
+	//data      []byte
+	//dataMutex sync.RWMutex
+}
+
+type peer struct {
+	id       string
+	favBlock *block
+	epoch    uint64
 }
 
 func newChain() *chain {
@@ -23,37 +30,32 @@ func newChain() *chain {
 	}
 }
 
-func (c *chain) Add(data int32) error {
-	/*
-		if b, ok := c.blocks[c.currBlock]; !ok {
-			return errNoBlock
+func (c *chain) handleMsg(data []byte) ([]byte, error) {
+	for p, id := range data {
+		if existingPeer, exists := c.peerMap[id]; !exists {
+			add()
 		}
 
-		err := b.add(data)
-		if err == errFullBlock {
-			newBlock := createBlock()
-			c.currBlock++
-			c.blocks[c.currBlock] = newBlock
-			return c.add(data)
-		} else if err != nil {
-			return err
-		}
-	*/
-
-	c.dataMutex.Lock()
-	defer c.dataMutex.Unlock()
-
-	exists := false
-
-	for _, v := range c.data {
-		if v == data {
-			exists = true
-			break
+		if p.block != existingPeer.block {
+			changeBlock()
 		}
 	}
 
-	if !exists {
-		c.data = append(c.data, data)
+	incrementEpoch()
+}
+
+func (c *chain) Add(data []byte) error {
+	if b, ok := c.blocks[c.currBlock]; !ok {
+		return errNoBlock
+	}
+
+	err := b.add(data)
+	if err == errFullBlock {
+		newBlock := createBlock()
+		c.addBlock(newBlock)
+		return newBlock.add(data)
+	} else if err != nil {
+		return err
 	}
 
 	return nil
@@ -68,4 +70,12 @@ func (c *chain) State() []int32 {
 	copy(buf, c.data)
 
 	return buf
+}
+
+func (c *chain) addBlock(b *block) {
+	c.blockMutex.Lock()
+	defer c.blockMutex.Unlock()
+
+	c.currBlock++
+	c.blocks[c.currBlock] = b
 }

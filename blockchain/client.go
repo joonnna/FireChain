@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/joonnna/ifrit/ifrit"
-	"github.com/joonnna/ifrit/lib/protobuf"
+	"github.com/joonnna/ifrit"
 	"github.com/joonnna/ifrit/logger"
+	"github.com/joonnna/ifrit/protobuf"
 )
 
 type Client struct {
@@ -20,7 +20,7 @@ type Client struct {
 }
 
 func NewClient(entryAddr string) (*Client, error) {
-	i, err := ifrit.NewClient(entryAddr)
+	i, err := ifrit.NewClient(entryAddr, nil)
 	if err != nil {
 		return nil, err
 	}

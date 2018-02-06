@@ -1,5 +1,7 @@
 package merkle
 
+import "io"
+
 type Tree struct {
 	root *node
 
@@ -26,9 +28,8 @@ func newTree() *Tree {
 	}
 }
 
-/*
 func createTree(data io.Reader) *Tree {
-
+	return nil
 }
 
 func (t *Tree) Add(data []byte) error {
@@ -51,7 +52,7 @@ func (t *Tree) Exist(data []byte) error {
 func (t *Tree) CompareRoot(hash []byte) (bool, error) {
 
 }
-*/
+
 /*
 func (t *Tree) Read(p []byte) (int, error) {
 

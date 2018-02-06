@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+message EntryHeader {
+    bytes hash = 1;
+}
+
+message EntryContent {
+    bytes hash = 1;
+    bytes content = 2;
+}
+
+message BlockHeader {
+    bytes rootHash = 1;
+    uint64 blockNum = 2;
+}
+
+message BlockContent {
+    bytes rootHash = 1;
+    uint64 blockNum = 2;
+    bytes content = 3;
+}
+
+/*
+message State {
+    repeated EntryHeader
+
+}
+*/
