@@ -1,37 +1,38 @@
 package blockchain
 
 import (
+	"crypto/sha256"
 	"errors"
-	"time"
+	"fmt"
+	"sync"
 
-	"github.com/joonnna/blocks/merkle"
+	"github.com/cbergoon/merkletree"
 )
 
 var (
 	errInvalidBlock = errors.New("Invalid block")
 	errFullBlock    = errors.New("Block is full")
-	maxSize         = 4096
 )
 
 type block struct {
-	blockNum uint64
-	currSize uint32
+	contentMutex sync.RWMutex
+	entries      []*entry
+	currSize     uint32
+	dirty        bool
+	tree         *merkletree.MerkleTree
+	headerHash   []byte
 
-	prevHash []byte
+	*header
+}
 
-	tree *merkle.Tree
-
-	timestamp time.Time
-
-	//entryMutex sync.RWMutex
-	//entries    []*entry
+type header struct {
+	merkleHash []byte
+	prevHash   []byte
+	targetSize uint32
 }
 
 func createBlock() *block {
-	return &block{
-		tree:      merkle.NewTree(),
-		timestamp: time.Now(),
-	}
+	return &block{}
 }
 
 func formBlock(data []byte) *block {
@@ -39,8 +40,8 @@ func formBlock(data []byte) *block {
 }
 
 func (b *block) add(data []byte) error {
-	b.entryMutex.Lock()
-	defer b.entryMutex.Unlock()
+	b.contentMutex.Lock()
+	defer b.contentMutex.Unlock()
 
 	size := len(data)
 
@@ -48,12 +49,51 @@ func (b *block) add(data []byte) error {
 		return errFullBlock
 	}
 
-	err := b.tree.Add(data)
-	if err != nil {
-		return err
+	b.entries = append(b.entries, &entry{data: data})
+
+	if b.tree == nil {
+		b.tree, err = merkletree.NewTree(b.entries)
+		if err != nil {
+			return err
+		}
+	} else {
+		err := b.tree.RebuildTreeWith(b.entries)
+		if err != nil {
+			return err
+		}
 	}
+
+	b.dirty = true
 
 	b.currSize += size
 
 	return nil
+}
+
+func (b *block) headerHash() []byte {
+	b.contentMutex.Lock()
+	defer b.contentMutex.Unlock()
+
+	var src []byte
+
+	if b.dirty {
+		src = hashHeader(b.header)
+		b.headerHash = src
+	} else {
+		src = b.headerHash
+	}
+
+	ret := make([]byte, len(src))
+
+	copy(ret, src)
+
+	b.dirty = false
+
+	return ret
+
+}
+
+func hashHeader(h *header) []byte {
+	//TODO Change this
+	return sha256.Sum256(fmt.Sprintf("%v", h))
 }

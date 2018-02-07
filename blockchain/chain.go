@@ -19,9 +19,10 @@ type chain struct {
 }
 
 type peer struct {
-	id       string
-	favBlock *block
-	epoch    uint64
+	id        string
+	favBlock  []byte
+	epoch     uint64
+	signature []byte
 }
 
 func newChain() *chain {

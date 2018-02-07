@@ -91,8 +91,6 @@ func (c *Client) ShutDown() {
 	close(c.exitChan)
 }
 
-/*
 func (c *Client) Add(data []byte) error {
 	return c.ch.Add(data)
 }
-*/

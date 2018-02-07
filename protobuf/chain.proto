@@ -11,7 +11,8 @@ message EntryContent {
 
 message BlockHeader {
     bytes rootHash = 1;
-    uint64 blockNum = 2;
+    bytes prevHash = 2;
+    uint32 targetSize = 3;
 }
 
 message BlockContent {
@@ -20,9 +21,14 @@ message BlockContent {
     bytes content = 3;
 }
 
-/*
-message State {
-    repeated EntryHeader
+message PeerState {
+    string id = 1;
+    BlockHeader favBlock = 2;
+    uint64 epoch = 3;
+    bytes signature = 4;
 
 }
-*/
+
+message State {
+    map<string, PeerState> = 1;
+}
