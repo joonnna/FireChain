@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package blockchain;
+
+message EntryHeader {
+    bytes hash = 1;
+}
+
+message BlockEntry {
+    bytes hash = 1;
+    bytes content = 2;
+}
+
+message BlockHeader {
+    bytes rootHash = 1;
+    bytes prevHash = 2;
+}
+
+message BlockContent {
+    bytes rootHash = 1;
+    bytes prevHash = 2;
+    repeated bytes content = 3;
+}
+
+message PeerState {
+    string id = 1;
+    repeated bytes entryHashes = 2;
+    bytes rootHash = 3;
+    bytes prevHash = 4;
+    uint64 epoch = 5;
+    bytes signature = 6;
+}
+
+message State {
+    map<string, PeerState> peers = 1;
+    map<string, bool> pendingEntries = 2;
+}
+
+message StateResponse {
+    repeated BlockEntry missingEntries = 2;
+}

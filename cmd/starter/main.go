@@ -1,16 +1,18 @@
 package main
 
 import (
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
 	_ "net/http/pprof"
 
-	"github.com/joonnna/blocks/blockchain"
+	"github.com/joonnna/blocks"
 	"github.com/joonnna/ifrit/bootstrap"
 )
 
@@ -18,11 +20,14 @@ func createClients(requestChan chan interface{}, exitChan chan bool, arg string)
 	for {
 		select {
 		case <-requestChan:
-			c, err := blockchain.NewClient(arg)
+			c, err := blocks.NewClient(arg)
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
+
+			go addPeriodically(c)
+
 			requestChan <- c
 		case <-exitChan:
 			return
@@ -31,9 +36,21 @@ func createClients(requestChan chan interface{}, exitChan chan bool, arg string)
 	}
 }
 
+func addPeriodically(c *blocks.Client) {
+	for {
+		time.Sleep(time.Second * 3)
+		buf := make([]byte, 50)
+		_, err := rand.Read(buf)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		c.Add(buf)
+	}
+}
+
 func main() {
 	var numRings uint
-	var cpuprofile, memprofile string
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -59,4 +76,29 @@ func main() {
 
 	l.ShutDown()
 	close(exitChan)
+
+	/*
+		var c1 []merkletree.Content
+		var c2 []merkletree.Content
+
+		elem1 := &entry{data: []byte("satan i gatan")}
+		elem2 := &entry{data: []byte("smeg satan")}
+		elem3 := &entry{data: []byte("drittspill")}
+
+		c1 = append(c1, elem1)
+		c1 = append(c1, elem2)
+		c1 = append(c1, elem3)
+
+		c2 = append(c2, elem3)
+		c2 = append(c2, elem2)
+		c2 = append(c2, elem1)
+
+		t1, _ := merkletree.NewTree(c1)
+		t2, _ := merkletree.NewTree(c2)
+
+		fmt.Println(t1.MerkleRoot())
+		fmt.Println(t2.MerkleRoot())
+
+		fmt.Println(bytes.Equal(t1.MerkleRoot(), t2.MerkleRoot()))
+	*/
 }
