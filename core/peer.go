@@ -11,6 +11,9 @@ type peer struct {
 	prevHash  []byte
 	epoch     uint64
 	signature []byte
+
+	// Used for worm interactions, only used for debuging.
+	httpAddr string
 }
 
 func (p *peer) getRootHash() []byte {

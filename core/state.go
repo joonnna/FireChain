@@ -6,13 +6,11 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
+	log "github.com/inconshreveable/log15"
 	"github.com/joonnna/blocks/protobuf"
-	"github.com/joonnna/ifrit/logger"
 )
 
 type state struct {
-	log *logger.Log
-
 	pool *entryPool
 
 	sync.RWMutex
@@ -21,16 +19,18 @@ type state struct {
 	inProgress *block
 }
 
-func newState(localId string, log *logger.Log) *state {
+func newState(localId string, httpAddr string) *state {
 	peerMap := make(map[string]*peer)
-	localPeer := &peer{id: localId}
+	localPeer := &peer{
+		id:       localId,
+		httpAddr: httpAddr,
+	}
 	peerMap[localId] = localPeer
 
 	return &state{
 		peerMap:    peerMap,
 		pool:       newEntryPool(),
 		localPeer:  localPeer,
-		log:        log,
 		inProgress: createBlock(nil),
 	}
 }
@@ -78,13 +78,13 @@ func (s *state) merge(other *blockchain.State) ([]byte, error) {
 	if peers := other.GetPeers(); peers != nil {
 		s.mergePeers(peers)
 	} else {
-		s.log.Debug.Println("No peer state")
+		log.Debug("No peer state")
 	}
 
 	if entries := other.GetPendingEntries(); entries != nil {
 		resp.MissingEntries = s.pool.diff(entries)
 	} else {
-		s.log.Debug.Println("No pending entries")
+		log.Debug("No pending entries")
 	}
 
 	b, err := proto.Marshal(resp)
@@ -128,8 +128,8 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 		}
 	}
 
-	s.log.Debug.Println("Block options: ", len(blockVotes))
-	s.log.Debug.Println("Number of candidates: ", len(favourites))
+	log.Debug("Block options", "numBlocks", len(blockVotes))
+	log.Debug("Number of candidates", "amount", len(favourites))
 	if numFavs := len(favourites); numFavs >= 1 {
 		idx := 0
 		if numFavs > 1 {
@@ -138,8 +138,8 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 
 		favPeer := favourites[idx]
 		s.localPeer.increment(favPeer.getRootHash(), favPeer.getPrevHash(), favPeer.getEntries())
-		s.log.Debug.Println("Favourite rootHash: ", string(favPeer.getRootHash()))
-		s.log.Debug.Println("Favourite prevHash: ", string(favPeer.getPrevHash()))
+		log.Debug("Favourite rootHash", "rootHash", string(favPeer.getRootHash()))
+		log.Debug("Favourite prevHash", "prevHash", string(favPeer.getPrevHash()))
 	}
 }
 
@@ -158,6 +158,7 @@ func (s *state) mergePeer(p *blockchain.PeerState) {
 			rootHash: p.GetRootHash(),
 			prevHash: p.GetPrevHash(),
 			epoch:    p.GetEpoch(),
+			httpAddr: p.GetHttpAddr(),
 		}
 
 		s.peerMap[newPeer.id] = newPeer
@@ -176,7 +177,7 @@ func (s *state) add(e *entry) {
 	}
 	/*
 		else if err != nil {
-			s.log.Err.Println(err)
+			log.Error(err.Error())
 		}
 	*/
 }
@@ -192,25 +193,25 @@ func (s *state) newRound(prevHash []byte) *block {
 	s.Lock()
 	defer s.Unlock()
 
-	s.log.Info.Println("Picking favourite block")
+	log.Debug("Picking favourite block")
 
 	new := createBlock(prevHash)
 
 	if s.localPeer.getEntries() == nil {
-		s.log.Debug.Println("no entries, the fuck")
+		log.Error("no entries, the fuck")
 	}
 
 	for _, e := range s.localPeer.getEntries() {
 		key := string(e)
 		ent := s.pool.getPending(key)
 		if ent == nil {
-			s.log.Err.Println("Missing entry in fav block")
+			log.Error("Missing entry in fav block")
 			continue
 		}
 
 		err := new.add(ent)
 		if err != nil {
-			s.log.Err.Println(err)
+			log.Error(err.Error())
 		} else {
 			s.pool.removePending(key)
 			s.pool.addConfirmed(ent)
@@ -218,7 +219,7 @@ func (s *state) newRound(prevHash []byte) *block {
 	}
 
 	if eq := new.cmpRootHash(s.localPeer.getRootHash()); !eq {
-		s.log.Err.Println("Have different root hash for new fav block")
+		log.Error("Have different root hash for new fav block")
 	}
 
 	for _, p := range s.peerMap {

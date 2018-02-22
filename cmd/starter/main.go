@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
+	mrand "math/rand"
 	"os"
 	"os/signal"
 	"runtime"
@@ -13,18 +14,40 @@ import (
 	_ "net/http/pprof"
 
 	"github.com/joonnna/blocks"
+	"github.com/joonnna/ifrit"
 	"github.com/joonnna/ifrit/bootstrap"
+	"github.com/joonnna/ifrit/worm"
+
+	log "github.com/inconshreveable/log15"
 )
 
-func createClients(requestChan chan interface{}, exitChan chan bool, arg string) {
+var (
+	clients []string
+)
+
+func createClients(requestChan chan interface{}, exitChan chan bool, viz string) {
 	for {
 		select {
 		case <-requestChan:
-			c, err := blocks.NewClient(arg)
+			var addrs []string
+			if length := len(clients); length > 0 {
+				idx := mrand.Int() % length
+				addrs = append(addrs, clients[idx])
+			}
+
+			conf := &ifrit.Config{
+				Visualizer: true,
+				VisAddr:    viz,
+				EntryAddrs: addrs,
+			}
+
+			c, err := blocks.NewClient(conf)
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
+
+			clients = append(clients, c.Addr())
 
 			go addPeriodically(c)
 
@@ -51,23 +74,34 @@ func addPeriodically(c *blocks.Client) {
 
 func main() {
 	var numRings uint
+	var vizAddr string
+	var wormInterval uint
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	args := flag.NewFlagSet("args", flag.ExitOnError)
 	args.UintVar(&numRings, "numRings", 3, "Number of gossip rings to be used")
-
+	args.StringVar(&vizAddr, "vizAddr", "127.0.0.1:8095", "Address of the visualizer(ip:port).")
+	args.UintVar(&wormInterval, "wormInterval", 40, "Interval to pull states")
 	args.Parse(os.Args[1:])
 
 	ch := make(chan interface{})
 	exitChan := make(chan bool)
 
-	l, err := bootstrap.NewLauncher(uint32(numRings), ch)
+	r := log.Root()
+
+	h := log.CallerFileHandler(log.Must.FileHandler("/var/log/chainClient", log.TerminalFormat()))
+
+	r.SetHandler(h)
+
+	w := worm.NewWorm(blocks.CmpStates, "/hosts", "/state", wormInterval)
+
+	l, err := bootstrap.NewLauncher(uint32(numRings), ch, w)
 	if err != nil {
 		panic(err)
 	}
 
-	go createClients(ch, exitChan, l.EntryAddr)
+	go createClients(ch, exitChan, vizAddr)
 	go l.Start()
 
 	channel := make(chan os.Signal, 2)

@@ -3,13 +3,15 @@ package core
 import (
 	"crypto/sha256"
 	"errors"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/joonnna/blocks/protobuf"
 	"github.com/joonnna/ifrit"
-	"github.com/joonnna/ifrit/logger"
+
+	log "github.com/inconshreveable/log15"
 )
 
 var (
@@ -26,9 +28,6 @@ type Chain struct {
 	blocks        map[uint64]*block
 	currBlock     uint64
 
-	localBlockMutex sync.RWMutex
-	localBlock      *block
-
 	queueMutex sync.RWMutex
 	queuedData [][]byte
 
@@ -37,20 +36,28 @@ type Chain struct {
 	ifrit *ifrit.Client
 	id    string
 
-	log *logger.Log
+	httpListener net.Listener
+
+	exitChan chan bool
 }
 
-func NewChain(entryAddr string, log *logger.Log) (*Chain, error) {
-	i, err := ifrit.NewClient(entryAddr, &ifrit.Config{Visualizer: true, VisAddr: "127.0.0.1:8095"})
+func NewChain(conf *ifrit.Config) (*Chain, error) {
+	i, err := ifrit.NewClient(conf)
+	if err != nil {
+		return nil, err
+	}
+
+	l, err := initHttp()
 	if err != nil {
 		return nil, err
 	}
 
 	return &Chain{
-		blocks: make(map[uint64]*block),
-		state:  newState(i.Id(), log),
-		ifrit:  i,
-		log:    log,
+		blocks:       make(map[uint64]*block),
+		state:        newState(i.Id(), l.Addr().String()),
+		ifrit:        i,
+		httpListener: l,
+		exitChan:     make(chan bool),
 	}, nil
 }
 
@@ -58,8 +65,20 @@ func (c *Chain) Start() {
 	c.ifrit.RegisterMsgHandler(c.handleMsg)
 	c.ifrit.RegisterResponseHandler(c.handleResponse)
 	go c.ifrit.Start()
+	go c.startHttp()
 
 	c.blockLoop()
+}
+
+func (c Chain) Addr() string {
+	return c.ifrit.Addr()
+}
+
+func (c *Chain) Stop() {
+	c.ifrit.ShutDown()
+	c.stopHttp()
+
+	close(c.exitChan)
 }
 
 func (c *Chain) Add(data []byte) error {
@@ -84,13 +103,13 @@ func (c *Chain) handleMsg(data []byte) ([]byte, error) {
 
 	err := proto.Unmarshal(data, msg)
 	if err != nil {
-		c.log.Err.Println(err)
+		log.Error(err.Error())
 		return nil, err
 	}
 
 	resp, err := c.state.merge(msg)
 	if err != nil {
-		c.log.Err.Println(err)
+		log.Error(err.Error())
 		return nil, err
 	}
 
@@ -107,7 +126,7 @@ func (c *Chain) handleResponse(resp []byte) {
 
 	err := proto.Unmarshal(resp, msg)
 	if err != nil {
-		c.log.Err.Println(err)
+		log.Error(err.Error())
 		return
 	}
 
@@ -126,9 +145,14 @@ func (c *Chain) handleResponse(resp []byte) {
 
 func (c *Chain) blockLoop() {
 	for {
-		time.Sleep(time.Second * 60)
-		c.pickFavouriteBlock()
-		c.updateState()
+		select {
+		case <-c.exitChan:
+			return
+
+		case <-time.After(time.Second * 60):
+			c.pickFavouriteBlock()
+			c.updateState()
+		}
 	}
 }
 
@@ -144,14 +168,14 @@ func (c *Chain) pickFavouriteBlock() {
 	newBlock := c.state.newRound(prev)
 
 	c.addBlock(newBlock)
-	c.log.Info.Println("Favourite block is now: ", string(newBlock.getRootHash()))
-	c.log.Info.Println("Prev is: ", string(newBlock.getPrevHash()))
+	log.Info("Favourite block", "rootHash", string(newBlock.getRootHash()))
+	log.Info("Previous", "prevhash", string(newBlock.getPrevHash()))
 }
 
 func (c *Chain) updateState() {
 	bytes, err := c.state.bytes()
 	if err != nil {
-		c.log.Err.Println(err)
+		log.Error(err.Error())
 		return
 	}
 	c.ifrit.SetGossipContent(bytes)
@@ -211,7 +235,7 @@ func (c *Chain) generateResponse(msg *blockchain.BlockHeader) ([]byte, error) {
 		}
 		bytes, err = proto.Marshal(resp)
 		if err != nil {
-			c.log.Err.Println(err)
+			log.Error(err.Error())
 			return nil, err
 		}
 
@@ -248,7 +272,7 @@ func (c *Chain) mergeCurrBlock(msg *blockchain.BlockContent) {
 
 		err := b.mergeBlock(content)
 		if err != nil {
-			c.log.Err.Println(err)
+			log.Error(err.Error())
 		}
 	}
 
