@@ -61,7 +61,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string)
 
 func addPeriodically(c *blocks.Client) {
 	for {
-		time.Sleep(time.Second * 3)
+		time.Sleep(time.Second * 20)
 		buf := make([]byte, 50)
 		_, err := rand.Read(buf)
 		if err != nil {
@@ -82,7 +82,7 @@ func main() {
 	args := flag.NewFlagSet("args", flag.ExitOnError)
 	args.UintVar(&numRings, "numRings", 3, "Number of gossip rings to be used")
 	args.StringVar(&vizAddr, "vizAddr", "127.0.0.1:8095", "Address of the visualizer(ip:port).")
-	args.UintVar(&wormInterval, "wormInterval", 40, "Interval to pull states")
+	args.UintVar(&wormInterval, "wormInterval", 90, "Interval to pull states")
 	args.Parse(os.Args[1:])
 
 	ch := make(chan interface{})
@@ -94,7 +94,7 @@ func main() {
 
 	r.SetHandler(h)
 
-	w := worm.NewWorm(blocks.CmpStates, "/hosts", "/state", wormInterval)
+	w := worm.NewWorm(blocks.CmpStates, "hosts", "state", wormInterval)
 
 	l, err := bootstrap.NewLauncher(uint32(numRings), ch, w)
 	if err != nil {

@@ -70,8 +70,14 @@ func (c *Chain) Start() {
 	c.blockLoop()
 }
 
+// Returns the address of the underlying ifrit client.
 func (c Chain) Addr() string {
 	return c.ifrit.Addr()
+}
+
+// Returns the address of the http module of the chain, used for worm input.
+func (c Chain) HttpAddr() string {
+	return c.httpListener.Addr().String()
 }
 
 func (c *Chain) Stop() {
@@ -149,7 +155,7 @@ func (c *Chain) blockLoop() {
 		case <-c.exitChan:
 			return
 
-		case <-time.After(time.Second * 60):
+		case <-time.After(time.Second * 600):
 			c.pickFavouriteBlock()
 			c.updateState()
 		}
@@ -157,19 +163,10 @@ func (c *Chain) blockLoop() {
 }
 
 func (c *Chain) pickFavouriteBlock() {
-	var prev []byte
-
-	curr := c.getCurrBlock()
-
-	if curr != nil {
-		prev = curr.getPrevHash()
-	}
-
-	newBlock := c.state.newRound(prev)
+	newBlock := c.state.newRound()
 
 	c.addBlock(newBlock)
-	log.Info("Favourite block", "rootHash", string(newBlock.getRootHash()))
-	log.Info("Previous", "prevhash", string(newBlock.getPrevHash()))
+	log.Info("New block", "rootHash", string(newBlock.getRootHash()), "prevhash", string(newBlock.getPrevHash()))
 }
 
 func (c *Chain) updateState() {

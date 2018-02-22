@@ -51,14 +51,23 @@ func (c *Chain) stateHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 
-	w.Write(bytes)
+	_, err = w.Write(bytes)
+	if err != nil {
+		log.Error(err.Error())
+	}
 }
 
 func (c *Chain) hostsHandler(w http.ResponseWriter, r *http.Request) {
-	addrs := c.ifrit.Members()
+	io.Copy(ioutil.Discard, r.Body)
+	r.Body.Close()
+
+	addrs := c.state.getHttpAddrs()
 
 	for _, a := range addrs {
-		w.Write([]byte(fmt.Sprintf("%s\n", a)))
+		_, err := w.Write([]byte(fmt.Sprintf("%s\n", a)))
+		if err != nil {
+			log.Error(err.Error())
+		}
 	}
 }
 
@@ -97,7 +106,9 @@ func CmpStates(first, second []byte) error {
 	m1 := s1.GetBlocks()
 	m2 := s2.GetBlocks()
 
-	if m1 == nil || m2 == nil {
+	if m1 == nil && m2 == nil {
+		return nil
+	} else if m1 == nil || m2 == nil {
 		return errors.New("Nil maps")
 	}
 

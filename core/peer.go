@@ -12,7 +12,8 @@ type peer struct {
 	epoch     uint64
 	signature []byte
 
-	// Used for worm interactions, only used for debuging.
+	// Only for worm interaction
+	// TODO solve this differently
 	httpAddr string
 }
 

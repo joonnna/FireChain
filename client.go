@@ -42,6 +42,10 @@ func (c *Client) Addr() string {
 	return c.ch.Addr()
 }
 
+func (c *Client) HttpAddr() string {
+	return c.ch.HttpAddr()
+}
+
 func (c *Client) Add(data []byte) error {
 	if data == nil || len(data) == 0 {
 		return errInvalidData

@@ -30,8 +30,9 @@ message PeerState {
     uint64 epoch = 5;
     bytes signature = 6;
 
-    // Only for debuging.
-    string httpAddr = 7;
+	// Only for worm interaction
+	// TODO solve this differently
+	string httpAddr = 7;
 }
 
 message State {

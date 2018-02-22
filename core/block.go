@@ -62,6 +62,9 @@ func (b *block) addToBlock(e *entry) error {
 			return err
 		}
 	} else {
+		if b.treeContent == nil {
+			return errors.New("Content is nil?!")
+		}
 		err = b.tree.RebuildTreeWith(b.treeContent)
 		if err != nil {
 			return err

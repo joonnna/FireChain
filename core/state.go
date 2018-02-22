@@ -51,6 +51,7 @@ func (s *state) bytes() ([]byte, error) {
 				EntryHashes: entries,
 				RootHash:    p.getRootHash(),
 				PrevHash:    p.getPrevHash(),
+				HttpAddr:    p.httpAddr,
 			}
 
 			m.Peers[p.id] = s
@@ -128,8 +129,8 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 		}
 	}
 
-	log.Debug("Block options", "numBlocks", len(blockVotes))
-	log.Debug("Number of candidates", "amount", len(favourites))
+	//log.Debug("Block voting", "Options", len(blockVotes), "Favourites", len(favourites))
+
 	if numFavs := len(favourites); numFavs >= 1 {
 		idx := 0
 		if numFavs > 1 {
@@ -138,8 +139,7 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 
 		favPeer := favourites[idx]
 		s.localPeer.increment(favPeer.getRootHash(), favPeer.getPrevHash(), favPeer.getEntries())
-		log.Debug("Favourite rootHash", "rootHash", string(favPeer.getRootHash()))
-		log.Debug("Favourite prevHash", "prevHash", string(favPeer.getPrevHash()))
+		//log.Debug("New favourite block", "rootHash", string(favPeer.getRootHash()), "prevHash", string(favPeer.getPrevHash()))
 	}
 }
 
@@ -175,11 +175,6 @@ func (s *state) add(e *entry) {
 	if err == errFullBlock && !s.localPeer.haveFavourite() {
 		s.localPeer.addBlock(s.inProgress)
 	}
-	/*
-		else if err != nil {
-			log.Error(err.Error())
-		}
-	*/
 }
 
 func (s *state) exists(key string) bool {
@@ -189,13 +184,13 @@ func (s *state) exists(key string) bool {
 	return s.pool.exists(key)
 }
 
-func (s *state) newRound(prevHash []byte) *block {
+func (s *state) newRound() *block {
 	s.Lock()
 	defer s.Unlock()
 
-	log.Debug("Picking favourite block")
+	log.Debug("Picking next block")
 
-	new := createBlock(prevHash)
+	new := createBlock(s.localPeer.getPrevHash())
 
 	if s.localPeer.getEntries() == nil {
 		log.Error("no entries, the fuck")
@@ -219,7 +214,7 @@ func (s *state) newRound(prevHash []byte) *block {
 	}
 
 	if eq := new.cmpRootHash(s.localPeer.getRootHash()); !eq {
-		log.Error("Have different root hash for new fav block")
+		log.Error("Have different root hash for new block")
 	}
 
 	for _, p := range s.peerMap {
@@ -235,50 +230,17 @@ func (s *state) newRound(prevHash []byte) *block {
 	return new
 }
 
-/*
-func (s *state) getPeerMap() []*peer {
-	c.peerMapMutex.RLock()
-	defer c.peerMapMutex.RUnlock()
+func (s *state) getHttpAddrs() []string {
+	s.RLock()
+	defer s.RUnlock()
 
-	ret := make([]*peer, len(c.peerMap))
 	idx := 0
+	ret := make([]string, len(s.peerMap))
 
-	for _, p := range c.peerMap {
-		ret[idx] = p
+	for _, p := range s.peerMap {
+		ret[idx] = p.httpAddr
 		idx++
 	}
 
 	return ret
 }
-
-// must hold write access mutex before calling
-func (s *state) addPeer(p *peer) {
-	if _, exists := c.peerMap[p.id]; exists {
-		return
-	}
-
-	c.peerMap[p.id] = p
-}
-
-// must hold reac access mutex before calling
-func (s *state) getPeer(key string) *peer {
-	if p, exists := c.peerMap[key]; !exists {
-		return nil
-	} else {
-		return p
-	}
-}
-
-
-func (s *state) reset() {
-	defer s.Unlock()
-
-	for _, p := range s.peerMap {
-		p.reset()
-	}
-}
-
-func (s *state) freeze() {
-	s.Lock()
-}
-*/
