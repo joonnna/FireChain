@@ -15,11 +15,13 @@ import (
 )
 
 var (
+	errNilBlock           = errors.New("Tried to add nil block")
 	errNoBlock            = errors.New("No current block, panic?!")
 	errInvalidBlockHeader = errors.New("Block header contained empty fields")
 	errInvalidBlock       = errors.New("Block contains empty fields")
 	errDifferentPrev      = errors.New("Different previous block")
 	errNoLocalPeer        = errors.New("Can't find local peer representation")
+	errNoMsgContent       = errors.New("Message content is either nil or of zero length")
 	ErrNoData             = errors.New("Given data is of zero length")
 )
 
@@ -105,6 +107,10 @@ func (c *Chain) Add(data []byte) error {
 }
 
 func (c *Chain) handleMsg(data []byte) ([]byte, error) {
+	if data == nil || len(data) <= 0 {
+		return nil, errNoMsgContent
+	}
+
 	msg := &blockchain.State{}
 
 	err := proto.Unmarshal(data, msg)
@@ -165,7 +171,13 @@ func (c *Chain) blockLoop() {
 func (c *Chain) pickFavouriteBlock() {
 	newBlock := c.state.newRound()
 
-	c.addBlock(newBlock)
+	// TODO if we get error here, we need a fallback strat
+	err := c.addBlock(newBlock)
+	if err != nil {
+		log.Error(err.Error())
+		return
+	}
+
 	log.Info("New block", "rootHash", string(newBlock.getRootHash()), "prevhash", string(newBlock.getPrevHash()))
 }
 
@@ -178,12 +190,18 @@ func (c *Chain) updateState() {
 	c.ifrit.SetGossipContent(bytes)
 }
 
-func (c *Chain) addBlock(b *block) {
+func (c *Chain) addBlock(b *block) error {
 	c.blockMapMutex.Lock()
 	defer c.blockMapMutex.Unlock()
 
+	if b == nil {
+		return errNilBlock
+	}
+
 	c.currBlock++
 	c.blocks[c.currBlock] = b
+
+	return nil
 }
 
 func (c *Chain) getCurrBlock() *block {

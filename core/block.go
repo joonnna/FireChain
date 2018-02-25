@@ -13,6 +13,11 @@ var (
 	errNoContent         = errors.New("Block blockchain has no content")
 	errDifferentRootHash = errors.New("Block does not have same root hash")
 	errAlreadyExists     = errors.New("Already exists in block")
+	errNoEntryData       = errors.New("Given entry has nil data")
+)
+
+const (
+	maxBlockSize = 128
 )
 
 // Written once and only read after, no need for mutexes
@@ -32,7 +37,7 @@ type block struct {
 
 func createBlock(prevHash []byte) *block {
 	return &block{
-		maxSize:  128,
+		maxSize:  maxBlockSize,
 		prevHash: prevHash,
 	}
 }
@@ -43,6 +48,10 @@ func formBlock(data []byte) *block {
 
 func (b *block) addToBlock(e *entry) error {
 	var err error
+
+	if e.data == nil {
+		return errNoEntryData
+	}
 
 	size := uint32(len(e.data))
 
@@ -78,6 +87,7 @@ func (b *block) addToBlock(e *entry) error {
 	return nil
 }
 
+// TODO change, O(n)... not good
 func (b block) existsInBlock(new *entry) bool {
 	for _, e := range b.entries {
 		if eq := e.equal(new); eq {

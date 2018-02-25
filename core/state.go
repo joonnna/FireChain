@@ -172,7 +172,7 @@ func (s *state) add(e *entry) {
 	s.pool.addPending(e)
 
 	err := s.inProgress.add(e)
-	if err == errFullBlock && !s.localPeer.haveFavourite() {
+	if err == errFullBlock && !s.localPeer.hasFavourite() {
 		s.localPeer.addBlock(s.inProgress)
 	}
 }

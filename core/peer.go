@@ -61,7 +61,7 @@ func (p *peer) reset() {
 	p.signature = nil
 }
 
-func (p *peer) haveFavourite() bool {
+func (p *peer) hasFavourite() bool {
 	if p.entries == nil {
 		return false
 	}

@@ -123,7 +123,7 @@ func CmpStates(first, second []byte) error {
 			}
 
 		} else {
-			return errors.New(fmt.Sprintf("Not equal, both do not block %d", blockNum))
+			return errors.New(fmt.Sprintf("Not equal, both do not have block %d", blockNum))
 		}
 	}
 
