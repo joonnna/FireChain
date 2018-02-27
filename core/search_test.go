@@ -2,7 +2,6 @@ package core
 
 import (
 	"bytes"
-	"fmt"
 	"testing"
 
 	"github.com/cbergoon/merkletree"
@@ -53,9 +52,6 @@ func (suite *SearchTestSuite) TestSorting() {
 
 	fullTree2, err := merkletree.NewTree(tree2)
 	assert.NoError(suite.T(), err, "Fail to build tree")
-
-	fmt.Println(fullTree.MerkleRoot())
-	fmt.Println(fullTree2.MerkleRoot())
 
 	cmp := bytes.Equal(fullTree.MerkleRoot(), fullTree2.MerkleRoot())
 

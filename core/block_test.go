@@ -2,8 +2,10 @@ package core
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
+	log "github.com/inconshreveable/log15"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -13,6 +15,10 @@ type BlockTestSuite struct {
 }
 
 func TestBlockTestSuite(t *testing.T) {
+	r := log.Root()
+
+	r.SetHandler(log.CallerFileHandler(log.StreamHandler(os.Stdout, log.TerminalFormat())))
+
 	suite.Run(t, new(BlockTestSuite))
 }
 

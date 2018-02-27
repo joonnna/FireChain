@@ -60,12 +60,17 @@ func (e *entryPool) removeConfirmed(key string) {
 func (e *entryPool) diff(other map[string]bool) []*blockchain.BlockEntry {
 	var ret []*blockchain.BlockEntry
 
-	for k, v := range e.pending {
-		if _, exists := other[k]; !exists {
+	if other == nil {
+		for _, v := range e.pending {
 			ret = append(ret, &blockchain.BlockEntry{Content: v.data, Hash: v.hash})
 		}
+	} else {
+		for k, v := range e.pending {
+			if _, exists := other[k]; !exists {
+				ret = append(ret, &blockchain.BlockEntry{Content: v.data, Hash: v.hash})
+			}
+		}
 	}
-
 	return ret
 }
 

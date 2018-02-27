@@ -53,6 +53,6 @@ func (c *Client) Add(data []byte) error {
 	return c.ch.Add(data)
 }
 
-func CmpStates(first, second []byte) error {
+func CmpStates(first, second []byte) (uint64, error) {
 	return core.CmpStates(first, second)
 }

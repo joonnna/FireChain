@@ -61,7 +61,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string)
 
 func addPeriodically(c *blocks.Client) {
 	for {
-		time.Sleep(time.Second * 20)
+		time.Sleep(time.Second * 10)
 		buf := make([]byte, 50)
 		_, err := rand.Read(buf)
 		if err != nil {
@@ -94,7 +94,7 @@ func main() {
 
 	r.SetHandler(h)
 
-	w := worm.NewWorm(blocks.CmpStates, "hosts", "state", wormInterval)
+	w := worm.NewWorm(blocks.CmpStates, "hosts", "state", vizAddr, wormInterval)
 
 	l, err := bootstrap.NewLauncher(uint32(numRings), ch, w)
 	if err != nil {

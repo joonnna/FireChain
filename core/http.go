@@ -89,43 +89,47 @@ func (c *Chain) getChain() ([]byte, error) {
 	return proto.Marshal(payload)
 }
 
-func CmpStates(first, second []byte) error {
+func CmpStates(first, second []byte) (uint64, error) {
+	var maxBlock uint64
 	s1 := &blockchain.WormPayload{}
 	s2 := &blockchain.WormPayload{}
 
 	err := proto.Unmarshal(first, s1)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	err = proto.Unmarshal(second, s2)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	m1 := s1.GetBlocks()
 	m2 := s2.GetBlocks()
 
 	if m1 == nil && m2 == nil {
-		return nil
+		return 0, nil
 	} else if m1 == nil || m2 == nil {
-		return errors.New("Nil maps")
+		return 0, errors.New("Nil maps")
 	}
 
 	for blockNum, b1 := range m1 {
+		if blockNum > maxBlock {
+			maxBlock = blockNum
+		}
 		if b2, exists := m2[blockNum]; exists {
 			if !bytes.Equal(b1.GetRootHash(), b2.GetRootHash()) {
-				return errors.New(fmt.Sprintf("Different root hashes for block %d", blockNum))
+				return maxBlock, errors.New(fmt.Sprintf("Different root hashes for block %d", blockNum))
 			}
 
 			if !bytes.Equal(b1.GetPrevHash(), b2.GetPrevHash()) {
-				return errors.New(fmt.Sprintf("Different prev hashes for block %d", blockNum))
+				return maxBlock, errors.New(fmt.Sprintf("Different prev hashes for block %d", blockNum))
 			}
 
 		} else {
-			return errors.New(fmt.Sprintf("Not equal, both do not have block %d", blockNum))
+			return maxBlock, errors.New(fmt.Sprintf("Not equal, both do not have block %d", blockNum))
 		}
 	}
 
-	return nil
+	return maxBlock, nil
 }

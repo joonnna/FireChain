@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"math/rand"
 	"sync"
 
@@ -84,8 +85,6 @@ func (s *state) merge(other *blockchain.State) ([]byte, error) {
 
 	if entries := other.GetPendingEntries(); entries != nil {
 		resp.MissingEntries = s.pool.diff(entries)
-	} else {
-		log.Debug("No pending entries")
 	}
 
 	b, err := proto.Marshal(resp)
@@ -109,6 +108,11 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 	}
 
 	for _, p := range s.peerMap {
+		// We do not consider peers with different previous blocks,
+		// risk of creating a fork.
+		if eq := bytes.Equal(s.localPeer.getPrevHash(), p.getPrevHash()); !eq {
+			continue
+		}
 		key := string(p.getRootHash())
 
 		if _, exists := blockVotes[key]; !exists {

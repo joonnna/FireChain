@@ -1,9 +1,11 @@
 package core
 
 import (
+	"os"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
+	log "github.com/inconshreveable/log15"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
@@ -16,6 +18,10 @@ type ChainTestSuite struct {
 }
 
 func TestChainTestSuite(t *testing.T) {
+	r := log.Root()
+
+	r.SetHandler(log.CallerFileHandler(log.StreamHandler(os.Stdout, log.TerminalFormat())))
+
 	suite.Run(t, new(ChainTestSuite))
 }
 
