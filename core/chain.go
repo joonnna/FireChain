@@ -161,7 +161,7 @@ func (c *Chain) blockLoop() {
 		case <-c.exitChan:
 			return
 
-		case <-time.After(time.Second * 600):
+		case <-time.After(time.Minute * 60):
 			c.pickFavouriteBlock()
 			c.updateState()
 		}

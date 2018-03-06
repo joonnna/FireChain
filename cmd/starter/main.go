@@ -61,7 +61,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string)
 
 func addPeriodically(c *blocks.Client) {
 	for {
-		time.Sleep(time.Second * 10)
+		time.Sleep(time.Second * 100)
 		buf := make([]byte, 50)
 		_, err := rand.Read(buf)
 		if err != nil {

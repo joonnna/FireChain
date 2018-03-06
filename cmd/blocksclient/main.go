@@ -30,9 +30,11 @@ func main() {
 
 	r := log.Root()
 
-	h := log.CallerFileHandler(log.Must.FileHandler("/var/log/blockslog", log.TerminalFormat()))
+	h := log.CallerFileHandler(log.Must.FileHandler("blockslog", log.TerminalFormat()))
 
 	r.SetHandler(h)
+
+	log.Info("Starting block client")
 
 	entryAddrs := strings.Split(entry, ",")
 
