@@ -37,13 +37,12 @@ message PeerState {
 
 message State {
     map<string, PeerState> peers = 1;
-    map<string, bool> pendingEntries = 2;
+    repeated bytes missingEntries = 2;
 }
 
 message StateResponse {
-    repeated BlockEntry missingEntries = 2;
+    repeated BlockEntry entries = 1;
 }
-
 
 message WormPayload {
     map<uint64, BlockHeader> blocks = 1;

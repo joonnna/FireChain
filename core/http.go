@@ -13,10 +13,11 @@ import (
 	"github.com/gorilla/mux"
 	log "github.com/inconshreveable/log15"
 	"github.com/joonnna/blocks/protobuf"
+	"github.com/joonnna/ifrit/netutil"
 )
 
 func initHttp() (net.Listener, error) {
-	l, err := net.Listen("tcp", "localhost:")
+	l, err := netutil.ListenOnPort(7500)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err

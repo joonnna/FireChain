@@ -42,7 +42,7 @@ func (s *state) bytes() ([]byte, error) {
 
 	m := &blockchain.State{
 		Peers:          make(map[string]*blockchain.PeerState),
-		PendingEntries: make(map[string]bool),
+		MissingEntries: s.pool.getAllMissing(),
 	}
 	for _, p := range s.peerMap {
 		if entries := p.getEntries(); entries != nil {
@@ -59,15 +59,6 @@ func (s *state) bytes() ([]byte, error) {
 		}
 	}
 
-	for _, e := range s.pool.getAllPending() {
-		key := string(e.hash)
-		if _, exists := m.PendingEntries[key]; !exists {
-			m.PendingEntries[key] = true
-		}
-	}
-
-	//s.log.Debug.Println("Number of pending entries: ", len(m.GetPendingEntries()))
-
 	return proto.Marshal(m)
 }
 
@@ -75,24 +66,29 @@ func (s *state) merge(other *blockchain.State) ([]byte, error) {
 	s.Lock()
 	defer s.Unlock()
 
-	resp := &blockchain.StateResponse{}
-
 	if peers := other.GetPeers(); peers != nil {
 		s.mergePeers(peers)
 	} else {
 		log.Debug("No peer state")
 	}
 
-	if entries := other.GetPendingEntries(); entries != nil {
-		resp.MissingEntries = s.pool.diff(entries)
-	}
+	if entries := other.GetMissingEntries(); entries != nil {
+		resp := &blockchain.StateResponse{
+			Entries: s.pool.diff(entries),
+		}
 
-	b, err := proto.Marshal(resp)
-	if err != nil {
-		return nil, err
-	}
+		log.Debug("Request for missing entries", "amount", len(entries))
 
-	return b, nil
+		b, err := proto.Marshal(resp)
+		if err != nil {
+			return nil, err
+		}
+
+		return b, nil
+	} else {
+		log.Debug("Returning nil response")
+		return nil, nil
+	}
 }
 
 func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
@@ -151,9 +147,12 @@ func (s *state) mergePeer(p *blockchain.PeerState) {
 	if p.GetEntryHashes() == nil {
 		return
 	}
+
 	if existingPeer := s.peerMap[p.GetId()]; existingPeer != nil {
 		if p.GetEpoch() > existingPeer.getEpoch() {
 			existingPeer.update(p.GetEpoch(), p.GetEntryHashes(), p.GetRootHash(), p.GetPrevHash())
+
+			s.mergeMissingEntries(p.GetEntryHashes())
 		}
 	} else {
 		newPeer := &peer{
@@ -166,26 +165,66 @@ func (s *state) mergePeer(p *blockchain.PeerState) {
 		}
 
 		s.peerMap[newPeer.id] = newPeer
+
+		s.mergeMissingEntries(p.GetEntryHashes())
 	}
 }
 
-func (s *state) add(e *entry) {
+func (s *state) mergeMissingEntries(entries [][]byte) {
+	for _, e := range entries {
+		key := string(e)
+		if !s.pool.isPending(key) && !s.pool.isMissing(key) {
+			s.pool.addMissing(key)
+			log.Debug("Added to missing entries", "amount", len(s.pool.getAllMissing()))
+		}
+	}
+}
+
+func (s *state) add(e *entry) error {
 	s.Lock()
 	defer s.Unlock()
 
+	return s.addNonLock(e)
+}
+
+func (s *state) addNonLock(e *entry) error {
 	s.pool.addPending(e)
 
 	err := s.inProgress.add(e)
-	if err == errFullBlock && !s.localPeer.hasFavourite() {
+
+	if err != nil && err != errFullBlock {
+		log.Error(err.Error())
+		return err
+	} else if err == errFullBlock && !s.localPeer.hasFavourite() {
 		s.localPeer.addBlock(s.inProgress)
 	}
+
+	return nil
 }
 
-func (s *state) exists(key string) bool {
-	s.RLock()
-	defer s.RUnlock()
+func (s *state) mergeResponse(r *blockchain.StateResponse) {
+	s.Lock()
+	defer s.Unlock()
 
-	return s.pool.exists(key)
+	if r == nil {
+		log.Debug("Response is nil")
+		return
+	}
+
+	for _, e := range r.GetEntries() {
+		key := string(e.GetHash())
+		if s.pool.isMissing(key) || s.pool.isPending(key) {
+			log.Debug("Got missing entry in response", "amount", len(s.pool.getAllMissing()))
+			s.pool.removeMissing(key)
+			if !s.pool.isPending(key) {
+				newEntry := &entry{data: e.GetContent(), hash: e.GetHash()}
+				err := s.addNonLock(newEntry)
+				if err != nil {
+					log.Error(err.Error())
+				}
+			}
+		}
+	}
 }
 
 func (s *state) newRound() *block {
@@ -196,6 +235,7 @@ func (s *state) newRound() *block {
 
 	new := createBlock(s.localPeer.getPrevHash())
 
+	// TODO need a fallback when we somehow have not recieved any entries
 	if s.localPeer.getEntries() == nil {
 		log.Error("no entries, the fuck")
 	}
@@ -217,13 +257,17 @@ func (s *state) newRound() *block {
 		}
 	}
 
+	// TODO need a fallback when we we've not recieved all entries in the chosen block
 	if eq := new.cmpRootHash(s.localPeer.getRootHash()); !eq {
 		log.Error("Have different root hash for new block")
 	}
 
+	// TODO is this even correct?
 	for _, p := range s.peerMap {
 		p.reset()
 	}
+
+	s.pool.resetMissing()
 
 	s.inProgress = createBlock(new.getRootHash())
 

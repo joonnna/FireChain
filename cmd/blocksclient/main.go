@@ -1,12 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	_ "net/http/pprof"
 
@@ -15,10 +18,24 @@ import (
 	"github.com/joonnna/ifrit"
 )
 
+func addPeriodically(c *blocks.Client) {
+	for {
+		time.Sleep(time.Second * 100)
+		buf := make([]byte, 50)
+		_, err := rand.Read(buf)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		c.Add(buf)
+	}
+}
+
 func main() {
 	var caAddr string
 	var entry string
 	var vizAddr string
+	var logging bool
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -26,13 +43,17 @@ func main() {
 	args.StringVar(&caAddr, "ca", "", "address(ip:port) of certificate authority")
 	args.StringVar(&entry, "entry", "", "address(ip:port) of existing clients")
 	args.StringVar(&vizAddr, "viz", "", "address(ip:port) of visualizer")
+	args.BoolVar(&logging, "log", true, "Bool deciding whether to log")
 	args.Parse(os.Args[1:])
 
 	r := log.Root()
 
-	h := log.CallerFileHandler(log.Must.FileHandler("blockslog", log.TerminalFormat()))
-
-	r.SetHandler(h)
+	if logging {
+		h := log.CallerFileHandler(log.Must.FileHandler("blockslog", log.TerminalFormat()))
+		r.SetHandler(h)
+	} else {
+		r.SetHandler(log.DiscardHandler())
+	}
 
 	log.Info("Starting block client")
 
@@ -63,6 +84,7 @@ func main() {
 	}
 
 	go c.Start()
+	go addPeriodically(c)
 
 	channel := make(chan os.Signal, 2)
 	signal.Notify(channel, os.Interrupt, syscall.SIGTERM)

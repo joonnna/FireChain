@@ -61,7 +61,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string)
 
 func addPeriodically(c *blocks.Client) {
 	for {
-		time.Sleep(time.Second * 100)
+		time.Sleep(time.Second * 10)
 		buf := make([]byte, 50)
 		_, err := rand.Read(buf)
 		if err != nil {
@@ -82,7 +82,7 @@ func main() {
 	args := flag.NewFlagSet("args", flag.ExitOnError)
 	args.UintVar(&numRings, "numRings", 3, "Number of gossip rings to be used")
 	args.StringVar(&vizAddr, "vizAddr", "127.0.0.1:8095", "Address of the visualizer(ip:port).")
-	args.UintVar(&wormInterval, "wormInterval", 90, "Interval to pull states")
+	args.UintVar(&wormInterval, "wormInterval", 20, "Interval to pull states")
 	args.Parse(os.Args[1:])
 
 	ch := make(chan interface{})
@@ -110,29 +110,4 @@ func main() {
 
 	l.ShutDown()
 	close(exitChan)
-
-	/*
-		var c1 []merkletree.Content
-		var c2 []merkletree.Content
-
-		elem1 := &entry{data: []byte("satan i gatan")}
-		elem2 := &entry{data: []byte("smeg satan")}
-		elem3 := &entry{data: []byte("drittspill")}
-
-		c1 = append(c1, elem1)
-		c1 = append(c1, elem2)
-		c1 = append(c1, elem3)
-
-		c2 = append(c2, elem3)
-		c2 = append(c2, elem2)
-		c2 = append(c2, elem1)
-
-		t1, _ := merkletree.NewTree(c1)
-		t2, _ := merkletree.NewTree(c2)
-
-		fmt.Println(t1.MerkleRoot())
-		fmt.Println(t2.MerkleRoot())
-
-		fmt.Println(bytes.Equal(t1.MerkleRoot(), t2.MerkleRoot()))
-	*/
 }

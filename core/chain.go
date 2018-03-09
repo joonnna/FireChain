@@ -99,7 +99,10 @@ func (c *Chain) Add(data []byte) error {
 		hash: hashBytes(data),
 	}
 
-	c.state.add(e)
+	err := c.state.add(e)
+	if err != nil {
+		return err
+	}
 
 	c.updateState()
 
@@ -108,6 +111,7 @@ func (c *Chain) Add(data []byte) error {
 
 func (c *Chain) handleMsg(data []byte) ([]byte, error) {
 	if data == nil || len(data) <= 0 {
+		log.Debug("Got nil message")
 		return nil, errNoMsgContent
 	}
 
@@ -132,6 +136,7 @@ func (c *Chain) handleMsg(data []byte) ([]byte, error) {
 
 func (c *Chain) handleResponse(resp []byte) {
 	if resp == nil || len(resp) == 0 {
+		log.Debug("Got nil response")
 		return
 	}
 	msg := &blockchain.StateResponse{}
@@ -144,13 +149,7 @@ func (c *Chain) handleResponse(resp []byte) {
 
 	//c.log.Debug.Println("Entries in response: ", len(msg.GetMissingEntries()))
 
-	for _, e := range msg.GetMissingEntries() {
-		key := string(e.GetHash())
-		if exists := c.state.exists(key); !exists {
-			newEntry := &entry{data: e.GetContent(), hash: e.GetHash()}
-			c.state.add(newEntry)
-		}
-	}
+	c.state.mergeResponse(msg)
 
 	c.updateState()
 }
@@ -161,7 +160,7 @@ func (c *Chain) blockLoop() {
 		case <-c.exitChan:
 			return
 
-		case <-time.After(time.Minute * 60):
+		case <-time.After(time.Minute * 2):
 			c.pickFavouriteBlock()
 			c.updateState()
 		}
@@ -221,99 +220,3 @@ func (c *Chain) addToQueue(data []byte) {
 func hashBytes(data []byte) []byte {
 	return sha256.New().Sum(data)
 }
-
-/*
-func (c *Chain) generateResponse(msg *blockchain.BlockHeader) ([]byte, error) {
-	var bytes []byte
-	var err error
-
-	if msg == nil {
-		c.log.Info.Println("Got empty block header")
-		return nil, nil
-	}
-
-	rootHash := msg.GetRootHash()
-	prevHash := msg.GetPrevHash()
-
-	if rootHash == nil || prevHash == nil {
-		return nil, errInvalidBlockHeader
-	}
-
-	if b, ok := c.blocks[c.getCurrBlock()]; !ok {
-		c.log.Err.Println(errNoBlock)
-		return nil, errNoBlock
-	} else if prevEqual := b.cmpPrevHash(prevHash); !prevEqual {
-		return nil, errDifferentPrev
-	} else if rootEqual := b.cmpRootHash(rootHash); !rootEqual {
-		resp := &blockchain.StateResponse{
-			Block: b.blockToPbMsg(),
-		}
-		bytes, err = proto.Marshal(resp)
-		if err != nil {
-			log.Error(err.Error())
-			return nil, err
-		}
-
-		return bytes, nil
-	} else {
-		return nil, nil
-	}
-}
-
-
-
-func (c *Chain) mergeCurrBlock(msg *blockchain.BlockContent) {
-	rootHash := msg.GetRootHash()
-	prevHash := msg.GetPrevHash()
-	content := msg.GetContent()
-
-	if rootHash == nil || prevHash == nil || content == nil {
-		c.log.Err.Println(errInvalidBlock)
-		return
-	}
-
-	if b, ok := c.blocks[c.getCurrBlock()]; !ok {
-		c.log.Err.Println(errNoBlock)
-	} else {
-		if equal := b.cmpPrevHash(prevHash); !equal {
-			c.log.Err.Println(errDifferentPrev)
-			return
-		}
-
-		if equal := b.cmpRootHash(rootHash); equal {
-			c.log.Info.Println("Received an equal block in response")
-			return
-		}
-
-		err := b.mergeBlock(content)
-		if err != nil {
-			log.Error(err.Error())
-		}
-	}
-
-}
-
-
-func (c *Chain) createLocalBlock(prev []byte) *block {
-	c.localBlockMutex.Lock()
-	defer c.localBlockMutex.Unlock()
-
-	c.localBlock = createBlock(prev)
-
-	return c.localBlock
-}
-
-func (c *Chain) getLocalBlock() *block {
-	c.localBlockMutex.RLock()
-	defer c.localBlockMutex.RUnlock()
-
-	return c.localBlock
-}
-
-func (c *Chain) fillLocalBlock() {
-	c.localBlockMutex.RLock()
-	defer c.localBlockMutex.RUnlock()
-
-	c.pool.fillWithPending(c.localBlock)
-}
-*/
