@@ -18,9 +18,24 @@ import (
 	"github.com/joonnna/ifrit"
 )
 
+func fillFirstBlock(c *blocks.Client) {
+	for {
+		buf := make([]byte, 50)
+		_, err := rand.Read(buf)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		err = c.Add(buf)
+		if err != nil {
+			break
+		}
+	}
+}
+
 func addPeriodically(c *blocks.Client) {
 	for {
-		time.Sleep(time.Second * 100)
+		time.Sleep(time.Second * 50)
 		buf := make([]byte, 50)
 		_, err := rand.Read(buf)
 		if err != nil {
@@ -32,10 +47,9 @@ func addPeriodically(c *blocks.Client) {
 }
 
 func main() {
-	var caAddr string
-	var entry string
-	var vizAddr string
+	var caAddr, entry, vizAddr string
 	var logging bool
+	var saturation, hosts, blockPeriod int
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -43,7 +57,10 @@ func main() {
 	args.StringVar(&caAddr, "ca", "", "address(ip:port) of certificate authority")
 	args.StringVar(&entry, "entry", "", "address(ip:port) of existing clients")
 	args.StringVar(&vizAddr, "viz", "", "address(ip:port) of visualizer")
-	args.BoolVar(&logging, "log", true, "Bool deciding whether to log")
+	args.BoolVar(&logging, "log", false, "Bool deciding whether to log")
+	args.IntVar(&saturation, "wait", 0, "Timeout to start creating block content")
+	args.IntVar(&hosts, "hosts", 0, "How many participants in experiment")
+	args.IntVar(&blockPeriod, "btime", 10, "Period between block chosing")
 	args.Parse(os.Args[1:])
 
 	r := log.Root()
@@ -77,13 +94,16 @@ func main() {
 		VisAddr:    vizAddr,
 	}
 
-	c, err := blocks.NewClient(conf)
+	c, err := blocks.NewClient(conf, saturation, hosts, blockPeriod)
 	if err != nil {
 		log.Error(err.Error())
 		panic(err)
 	}
 
 	go c.Start()
+
+	time.Sleep(time.Minute * time.Duration(saturation))
+	fillFirstBlock(c)
 	go addPeriodically(c)
 
 	channel := make(chan os.Signal, 2)

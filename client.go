@@ -17,8 +17,8 @@ var (
 	errInvalidData = errors.New("given data is empty or nil")
 )
 
-func NewClient(conf *ifrit.Config) (*Client, error) {
-	c, err := core.NewChain(conf)
+func NewClient(conf *ifrit.Config, timeout, hosts, period int) (*Client, error) {
+	c, err := core.NewChain(conf, timeout, hosts, period)
 	if err != nil {
 		return nil, err
 	}

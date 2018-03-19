@@ -19,8 +19,8 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	args := flag.NewFlagSet("args", flag.ExitOnError)
-	args.StringVar(&vizAddr, "vizAddr", "127.0.0.1:8095", "Address of the visualizer (ip:port)")
-	args.StringVar(&entryAddr, "entry", "", "Address of the visualizer (ip:port)")
+	args.StringVar(&vizAddr, "vizAddr", "129.242.19.135:8095", "Address of the visualizer (ip:port)")
+	args.StringVar(&entryAddr, "entry", "", "Address of an existing participant")
 	args.UintVar(&wormInterval, "wormInterval", 90, "Interval to pull states")
 
 	args.Parse(os.Args[1:])

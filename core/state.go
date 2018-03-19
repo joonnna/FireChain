@@ -12,15 +12,21 @@ import (
 )
 
 type state struct {
-	pool *entryPool
-
 	sync.RWMutex
 	peerMap    map[string]*peer
+	pool       *entryPool
 	localPeer  *peer
 	inProgress *block
+
+	// Experiments only
+	round                  func() uint32
+	prevRoundNumber        uint32
+	convergeMap            map[string]uint32
+	converged              bool
+	experimentParticipants int
 }
 
-func newState(localId string, httpAddr string) *state {
+func newState(localId string, httpAddr string, round func() uint32, hosts int) *state {
 	peerMap := make(map[string]*peer)
 	localPeer := &peer{
 		id:       localId,
@@ -33,6 +39,11 @@ func newState(localId string, httpAddr string) *state {
 		pool:       newEntryPool(),
 		localPeer:  localPeer,
 		inProgress: createBlock(nil),
+		round:      round,
+		// Experiment hosts might fail, will never register convergence if anyone fails
+		// 10% failsafe
+		experimentParticipants: int(float32(hosts) * 0.90),
+		convergeMap:            make(map[string]uint32),
 	}
 }
 
@@ -93,8 +104,8 @@ func (s *state) merge(other *blockchain.State) ([]byte, error) {
 
 func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 	var favourites []*peer
-	var numVotes uint = 0
-	blockVotes := make(map[string]uint)
+	var numVotes int = 0
+	blockVotes := make(map[string]int)
 
 	for id, p := range peers {
 		if id == s.localPeer.id {
@@ -141,6 +152,16 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 		s.localPeer.increment(favPeer.getRootHash(), favPeer.getPrevHash(), favPeer.getEntries())
 		//log.Debug("New favourite block", "rootHash", string(favPeer.getRootHash()), "prevHash", string(favPeer.getPrevHash()))
 	}
+
+	// Only 1 favourite, have seen atlest 90% of expected hosts and they have all voted
+	// for the single favourite
+	if len(favourites) == 1 && len(s.peerMap) >= s.experimentParticipants && numVotes >= s.experimentParticipants && !s.converged {
+		new := s.round() - s.prevRoundNumber
+		s.convergeMap[string(favourites[0].getRootHash())] = new
+		s.converged = true
+		log.Info("Converged", "rounds", new)
+	}
+
 }
 
 func (s *state) mergePeer(p *blockchain.PeerState) {
@@ -235,9 +256,8 @@ func (s *state) newRound() *block {
 
 	new := createBlock(s.localPeer.getPrevHash())
 
-	// TODO need a fallback when we somehow have not recieved any entries
 	if s.localPeer.getEntries() == nil {
-		log.Error("no entries, the fuck")
+		log.Error("no entries, adding empty block")
 	}
 
 	for _, e := range s.localPeer.getEntries() {
@@ -274,6 +294,9 @@ func (s *state) newRound() *block {
 	if full := s.pool.fillWithPending(s.inProgress); full {
 		s.localPeer.addBlock(s.inProgress)
 	}
+
+	s.converged = false
+	s.prevRoundNumber = s.round()
 
 	return new
 }

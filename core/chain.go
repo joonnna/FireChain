@@ -29,6 +29,7 @@ type Chain struct {
 	blockMapMutex sync.RWMutex
 	blocks        map[uint64]*block
 	currBlock     uint64
+	blockPeriod   time.Duration
 
 	queueMutex sync.RWMutex
 	queuedData [][]byte
@@ -41,9 +42,12 @@ type Chain struct {
 	httpListener net.Listener
 
 	exitChan chan bool
+
+	// Experiments only
+	saturationTimeout time.Duration
 }
 
-func NewChain(conf *ifrit.Config) (*Chain, error) {
+func NewChain(conf *ifrit.Config, saturationTimeout, numHosts, blockPeriod int) (*Chain, error) {
 	i, err := ifrit.NewClient(conf)
 	if err != nil {
 		return nil, err
@@ -55,20 +59,24 @@ func NewChain(conf *ifrit.Config) (*Chain, error) {
 	}
 
 	return &Chain{
-		blocks:       make(map[uint64]*block),
-		state:        newState(i.Id(), l.Addr().String()),
-		ifrit:        i,
-		httpListener: l,
-		exitChan:     make(chan bool),
+		blocks:            make(map[uint64]*block),
+		state:             newState(i.Id(), l.Addr().String(), i.GetGossipRounds, numHosts),
+		ifrit:             i,
+		httpListener:      l,
+		exitChan:          make(chan bool),
+		saturationTimeout: time.Minute * time.Duration(saturationTimeout),
+		blockPeriod:       time.Minute * time.Duration(blockPeriod),
 	}, nil
 }
 
 func (c *Chain) Start() {
-	c.ifrit.RegisterMsgHandler(c.handleMsg)
+	c.ifrit.RegisterGossipHandler(c.handleMsg)
 	c.ifrit.RegisterResponseHandler(c.handleResponse)
 	go c.ifrit.Start()
 	go c.startHttp()
 
+	time.Sleep(c.saturationTimeout)
+	c.ifrit.RecordGossipRounds()
 	c.blockLoop()
 }
 
@@ -160,7 +168,7 @@ func (c *Chain) blockLoop() {
 		case <-c.exitChan:
 			return
 
-		case <-time.After(time.Minute * 2):
+		case <-time.After(c.blockPeriod):
 			c.pickFavouriteBlock()
 			c.updateState()
 		}

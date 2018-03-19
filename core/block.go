@@ -21,7 +21,6 @@ const (
 )
 
 // Written once and only read after, no need for mutexes
-
 type block struct {
 	//TODO change this
 	treeContent []merkletree.Content
