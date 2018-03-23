@@ -22,13 +22,19 @@ message BlockContent {
     repeated bytes content = 3;
 }
 
+message Signature {
+    bytes r = 1;
+    bytes s = 2;
+}
+
+
 message PeerState {
     string id = 1;
     repeated bytes entryHashes = 2;
     bytes rootHash = 3;
     bytes prevHash = 4;
     uint64 epoch = 5;
-    bytes signature = 6;
+    Signature signature = 6;
 
 	// Only for worm interaction
 	// TODO solve this differently

@@ -25,7 +25,7 @@ var (
 	clients []string
 )
 
-func createClients(requestChan chan interface{}, exitChan chan bool, viz string) {
+func createClients(requestChan chan interface{}, exitChan chan bool, viz string, ca string) {
 	for {
 		select {
 		case <-requestChan:
@@ -38,10 +38,11 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string)
 			conf := &ifrit.Config{
 				Visualizer: true,
 				VisAddr:    viz,
-				EntryAddrs: addrs,
+				Ca:         true,
+				CaAddr:     ca,
 			}
 
-			c, err := blocks.NewClient(conf, 0, 10, 2)
+			c, err := blocks.NewClient(conf, 0, 10, 5, "")
 			if err != nil {
 				fmt.Println(err)
 				continue
@@ -101,7 +102,7 @@ func main() {
 		panic(err)
 	}
 
-	go createClients(ch, exitChan, vizAddr)
+	go createClients(ch, exitChan, vizAddr, l.EntryAddr)
 	go l.Start()
 
 	channel := make(chan os.Signal, 2)

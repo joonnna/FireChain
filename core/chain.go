@@ -45,9 +45,26 @@ type Chain struct {
 
 	// Experiments only
 	saturationTimeout time.Duration
+	experiment        bool
+	expAddr           string
 }
 
-func NewChain(conf *ifrit.Config, saturationTimeout, numHosts, blockPeriod int) (*Chain, error) {
+/*
+type ExpArgs struct {
+	SaturationTimeout time.Duration
+	NumHosts          uint32
+}
+*/
+
+type test interface {
+	Bytes()
+	Merge()
+	MergeResponse()
+	NewRound()
+	Add()
+}
+
+func NewChain(conf *ifrit.Config, timeout, hosts, blockPeriod uint32, expAddr string) (*Chain, error) {
 	i, err := ifrit.NewClient(conf)
 	if err != nil {
 		return nil, err
@@ -58,14 +75,21 @@ func NewChain(conf *ifrit.Config, saturationTimeout, numHosts, blockPeriod int) 
 		return nil, err
 	}
 
+	exp := false
+	if expAddr != "" {
+		exp = true
+	}
+
 	return &Chain{
 		blocks:            make(map[uint64]*block),
-		state:             newState(i.Id(), l.Addr().String(), i.GetGossipRounds, numHosts),
+		state:             newState(i, l.Addr().String(), hosts),
 		ifrit:             i,
 		httpListener:      l,
 		exitChan:          make(chan bool),
-		saturationTimeout: time.Minute * time.Duration(saturationTimeout),
 		blockPeriod:       time.Minute * time.Duration(blockPeriod),
+		saturationTimeout: time.Minute * time.Duration(timeout),
+		experiment:        exp,
+		expAddr:           expAddr,
 	}, nil
 }
 
@@ -177,6 +201,10 @@ func (c *Chain) blockLoop() {
 
 func (c *Chain) pickFavouriteBlock() {
 	newBlock := c.state.newRound()
+
+	if doExp := c.experiment; doExp {
+		c.sendResults(newBlock.getRootHash())
+	}
 
 	// TODO if we get error here, we need a fallback strat
 	err := c.addBlock(newBlock)

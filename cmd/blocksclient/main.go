@@ -47,9 +47,9 @@ func addPeriodically(c *blocks.Client) {
 }
 
 func main() {
-	var caAddr, entry, vizAddr string
+	var caAddr, entry, vizAddr, expAddr string
 	var logging bool
-	var saturation, hosts, blockPeriod int
+	var saturation, hosts, blockPeriod uint
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -57,10 +57,11 @@ func main() {
 	args.StringVar(&caAddr, "ca", "", "address(ip:port) of certificate authority")
 	args.StringVar(&entry, "entry", "", "address(ip:port) of existing clients")
 	args.StringVar(&vizAddr, "viz", "", "address(ip:port) of visualizer")
+	args.StringVar(&expAddr, "exp", "", "address of where to send experiment results")
 	args.BoolVar(&logging, "log", false, "Bool deciding whether to log")
-	args.IntVar(&saturation, "wait", 0, "Timeout to start creating block content")
-	args.IntVar(&hosts, "hosts", 0, "How many participants in experiment")
-	args.IntVar(&blockPeriod, "btime", 10, "Period between block chosing")
+	args.UintVar(&saturation, "wait", 0, "Timeout to start creating block content")
+	args.UintVar(&hosts, "hosts", 0, "How many participants in experiment")
+	args.UintVar(&blockPeriod, "btime", 10, "Period between block chosing")
 	args.Parse(os.Args[1:])
 
 	r := log.Root()
@@ -94,7 +95,7 @@ func main() {
 		VisAddr:    vizAddr,
 	}
 
-	c, err := blocks.NewClient(conf, saturation, hosts, blockPeriod)
+	c, err := blocks.NewClient(conf, uint32(saturation), uint32(hosts), uint32(blockPeriod), expAddr)
 	if err != nil {
 		log.Error(err.Error())
 		panic(err)

@@ -5,12 +5,14 @@ package core
 // access to all peers.
 
 type peer struct {
-	id        string
-	entries   [][]byte
-	rootHash  []byte
-	prevHash  []byte
-	epoch     uint64
-	signature []byte
+	id       string
+	entries  [][]byte
+	rootHash []byte
+	prevHash []byte
+	epoch    uint64
+
+	// Elliptic signature
+	r, s []byte
 
 	// Only for worm interaction
 	// TODO solve this differently
@@ -33,11 +35,25 @@ func (p *peer) getEntries() [][]byte {
 	return p.entries
 }
 
-func (p *peer) update(epoch uint64, entries [][]byte, rootHash, prevHash []byte) {
+func (p *peer) getR() []byte {
+	return p.r
+}
+func (p *peer) getS() []byte {
+	return p.s
+}
+
+func (p *peer) addSignature(r, s []byte) {
+	p.r = r
+	p.s = s
+}
+
+func (p *peer) update(epoch uint64, entries [][]byte, rootHash, prevHash, r, s []byte) {
 	p.epoch = epoch
 	p.entries = entries
 	p.rootHash = rootHash
 	p.prevHash = prevHash
+	p.r = r
+	p.s = s
 }
 
 func (p *peer) addBlock(b *block) {
@@ -58,7 +74,8 @@ func (p *peer) reset() {
 	p.entries = nil
 	p.rootHash = nil
 	p.prevHash = nil
-	p.signature = nil
+	p.r = nil
+	p.s = nil
 }
 
 func (p *peer) hasFavourite() bool {

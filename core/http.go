@@ -90,6 +90,19 @@ func (c *Chain) getChain() ([]byte, error) {
 	return proto.Marshal(payload)
 }
 
+func (c *Chain) sendResults(blockHash []byte) {
+	res := c.state.getConvergeValue(string(blockHash))
+
+	resp, err := http.Post(c.expAddr, "application/json", bytes.NewReader(res))
+	if err != nil {
+		log.Error(err.Error())
+		return
+	}
+
+	io.Copy(ioutil.Discard, resp.Body)
+	resp.Body.Close()
+}
+
 func CmpStates(first, second []byte) (uint64, error) {
 	var maxBlock uint64
 	s1 := &blockchain.WormPayload{}

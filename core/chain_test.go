@@ -27,7 +27,7 @@ func TestChainTestSuite(t *testing.T) {
 
 func (suite *ChainTestSuite) SetupTest() {
 	var err error
-	suite.c, err = NewChain(nil)
+	suite.c, err = NewChain(nil, 0, 0, 0, "")
 	assert.NoError(suite.T(), err, "Failed to create chain")
 }
 
@@ -55,12 +55,9 @@ func (suite *ChainTestSuite) TestHandleMsg() {
 	_, err := suite.c.handleMsg(nil)
 	assert.Error(suite.T(), err, "Nil message returns no error")
 
-	m := &blockchain.State{
-		PendingEntries: make(map[string]bool),
-	}
-
+	m := &blockchain.State{}
 	// Need to fill message with something before marshal
-	m.PendingEntries["test"] = true
+	m.MissingEntries = append(m.MissingEntries, []byte("test"))
 
 	bytes, err := proto.Marshal(m)
 	assert.NoError(suite.T(), err, "Failed to marshal message")
@@ -68,6 +65,6 @@ func (suite *ChainTestSuite) TestHandleMsg() {
 	_, err = suite.c.handleMsg(bytes)
 	assert.NoError(suite.T(), err, "Valid message returns error")
 
-	_, err = suite.c.handleMsg([]byte("test"))
+	_, err = suite.c.handleMsg([]byte("should fail"))
 	assert.Error(suite.T(), err, "Message with random bytes returns no error")
 }

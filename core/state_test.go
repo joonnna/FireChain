@@ -9,7 +9,9 @@ import (
 	"github.com/golang/protobuf/proto"
 	log "github.com/inconshreveable/log15"
 	"github.com/joonnna/blocks/protobuf"
+	"github.com/joonnna/ifrit"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -27,26 +29,58 @@ func TestStateTestSuite(t *testing.T) {
 }
 
 func (suite *StateTestSuite) SetupTest() {
-	suite.s = newState("local", "")
+	ifrit, err := ifrit.NewClient(nil)
+	require.NoError(suite.T(), err, "Failed to create ifrit client")
+	require.NotNil(suite.T(), ifrit, "Ifrit client is nil")
+
+	suite.s = newState(ifrit, "", 0)
+	suite.s.skipSignatures = true
 }
 
-func (suite *StateTestSuite) TestEmptyMerge() {
-	e := &entry{hash: []byte("testhash")}
+func (suite *StateTestSuite) TestMerge() {
+	e := &entry{
+		hash: []byte("testhash"),
+	}
+
+	suite.s.pool.addPending(e)
+
+	m := &blockchain.State{
+		Peers:          make(map[string]*blockchain.PeerState),
+		MissingEntries: [][]byte{e.hash},
+	}
+
+	p1 := &blockchain.PeerState{Id: "peer1", EntryHashes: make([][]byte, 1)}
+
+	m.Peers[p1.GetId()] = p1
+
+	resp, err := suite.s.merge(m)
+	require.NoError(suite.T(), err, "Merge fails")
+
+	// Local + merged peer, should be 2 entries in map
+	require.Equal(suite.T(), 2, len(suite.s.peerMap), "Peer not merged")
+	assert.NotNil(suite.T(), suite.s.peerMap[p1.GetId()], "Peer not added to map")
+
+	r := &blockchain.StateResponse{}
+
+	err = proto.Unmarshal(resp, r)
+	assert.NoError(suite.T(), err, "Unmarshal fails")
+
+	entries := r.GetEntries()
+	require.Equal(suite.T(), 1, len(entries), "Merge response does not contain entries")
+	assert.Equal(suite.T(), e.hash, entries[0].GetHash(), "Merged entry has wrong hash")
+}
+
+func (suite *StateTestSuite) TestNoPeersMerge() {
+	e := &entry{
+		hash: []byte("testhash"),
+	}
 
 	suite.s.pool.addPending(e)
 
 	// Protobuf somehow fails without both fields populated
 	m := &blockchain.State{
-		Peers:          make(map[string]*blockchain.PeerState),
-		PendingEntries: make(map[string]bool),
+		MissingEntries: [][]byte{e.hash},
 	}
-
-	p := &peer{
-		id:      "testpeer",
-		entries: make([][]byte, 1),
-	}
-
-	suite.s.peerMap[p.id] = p
 
 	resp, err := suite.s.merge(m)
 	assert.NoError(suite.T(), err, "Merge fails")
@@ -56,16 +90,14 @@ func (suite *StateTestSuite) TestEmptyMerge() {
 	err = proto.Unmarshal(resp, r)
 	assert.NoError(suite.T(), err, "Unmarshal fails")
 
-	entries := r.GetMissingEntries()
-	assert.Equal(suite.T(), 1, len(entries), "Merge response does not contain entries")
+	entries := r.GetEntries()
+	require.Equal(suite.T(), 1, len(entries), "Merge response does not contain entries")
 	assert.Equal(suite.T(), e.hash, entries[0].GetHash(), "Merged entry has wrong hash")
 }
 
-func (suite *StateTestSuite) TestMerge() {
-	// Protobuf somehow fails without both fields populated
+func (suite *StateTestSuite) TestNoEntriesMerge() {
 	m := &blockchain.State{
-		Peers:          make(map[string]*blockchain.PeerState),
-		PendingEntries: make(map[string]bool),
+		Peers: make(map[string]*blockchain.PeerState),
 	}
 
 	p1 := &blockchain.PeerState{Id: "peer1", EntryHashes: make([][]byte, 1)}
@@ -80,8 +112,38 @@ func (suite *StateTestSuite) TestMerge() {
 	assert.NotNil(suite.T(), suite.s.peerMap[p1.GetId()], "Peer not added to map")
 }
 
+func (suite *StateTestSuite) TestEmptyMerge() {
+	m := &blockchain.State{}
+
+	resp, err := suite.s.merge(m)
+	assert.NoError(suite.T(), err, "Merge fails")
+	assert.Nil(suite.T(), resp, "Empty request should return nil response")
+}
+
+func (suite *StateTestSuite) TestMergeWithNoDiff() {
+	e := &entry{
+		hash: []byte("testhash"),
+	}
+
+	suite.s.pool.addPending(e)
+
+	// Protobuf somehow fails without both fields populated
+	m := &blockchain.State{
+		MissingEntries: make([][]byte, 1),
+	}
+
+	resp, err := suite.s.merge(m)
+	assert.NoError(suite.T(), err, "Merge fails")
+
+	r := &blockchain.StateResponse{}
+
+	err = proto.Unmarshal(resp, r)
+	assert.NoError(suite.T(), err, "Unmarshal fails")
+	assert.Nil(suite.T(), r.GetEntries(), "no diff request should trigger empty response")
+}
+
 func (suite *StateTestSuite) TestBlockVoting() {
-	local := suite.s.peerMap["local"]
+	local := suite.s.localPeer
 
 	local.rootHash = []byte("localfavblock")
 
@@ -89,13 +151,13 @@ func (suite *StateTestSuite) TestBlockVoting() {
 
 	p1 := &blockchain.PeerState{
 		Id:          "peer1",
-		RootHash:    []byte("peer1favblock"),
+		RootHash:    []byte("localfavblock"),
 		EntryHashes: make([][]byte, 1),
 	}
 
 	p2 := &blockchain.PeerState{
 		Id:          "peer2",
-		RootHash:    []byte("peer1favblock"),
+		RootHash:    []byte("peer2favblock"),
 		EntryHashes: make([][]byte, 1),
 	}
 
@@ -108,7 +170,7 @@ func (suite *StateTestSuite) TestBlockVoting() {
 }
 
 func (suite *StateTestSuite) TestMultipleFavourites() {
-	local := suite.s.peerMap["local"]
+	local := suite.s.localPeer
 
 	local.rootHash = []byte("localfavblock")
 
@@ -147,7 +209,7 @@ func (suite *StateTestSuite) TestMultipleFavourites() {
 }
 
 func (suite *StateTestSuite) TestMergeEmptyPeer() {
-	local := suite.s.peerMap["local"]
+	local := suite.s.localPeer
 
 	prevSize := len(suite.s.peerMap)
 
@@ -184,8 +246,8 @@ func (suite *StateTestSuite) TestMergePeer() {
 	newPeer := suite.s.peerMap[p.GetId()]
 
 	// Local + merged peer, should be 2 entries in map
-	assert.Equal(suite.T(), 2, len(suite.s.peerMap), "Merged peer not added to map")
-	assert.NotNil(suite.T(), newPeer, "Merged peer is nil")
+	require.Equal(suite.T(), 2, len(suite.s.peerMap), "Merged peer not added to map")
+	require.NotNil(suite.T(), newPeer, "Merged peer is nil")
 
 	assert.Equal(suite.T(), newPeer.id, p.GetId(), "Peer state not saved")
 	assert.Equal(suite.T(), newPeer.getEntries(), p.GetEntryHashes(), "Peer state not saved")
@@ -233,16 +295,18 @@ func (suite *StateTestSuite) TestMergePeer() {
 func (suite *StateTestSuite) TestAdd() {
 	e := &entry{data: []byte("testdata"), hash: []byte("testhash")}
 
-	suite.s.add(e)
+	err := suite.s.add(e)
+	require.NoError(suite.T(), err, "Failed to add to block")
 
-	local := suite.s.peerMap["local"]
+	local := suite.s.peerMap[suite.s.localPeer.id]
 
 	assert.False(suite.T(), local.hasFavourite(), "Should not have favourite with unfinished block")
 	assert.Equal(suite.T(), 1, len(suite.s.inProgress.content()), "Entry not added to local progress block")
 
 	e2 := &entry{data: make([]byte, maxBlockSize), hash: []byte("testhash2")}
 
-	suite.s.add(e2)
+	err = suite.s.add(e2)
+	require.NoError(suite.T(), err, "Failed to add to block")
 
 	assert.True(suite.T(), local.hasFavourite(), "Should have favourite with finished block")
 	assert.Equal(suite.T(), suite.s.localPeer.getRootHash(), suite.s.inProgress.getRootHash(), "Not same block stored in local peer and progress block")
@@ -260,7 +324,7 @@ func (suite *StateTestSuite) TestNewRound() {
 		entries[i] = e
 	}
 
-	local := suite.s.peerMap["local"]
+	local := suite.s.localPeer
 	prevHash := local.getPrevHash()
 
 	newBlock := suite.s.newRound()

@@ -17,7 +17,7 @@ var (
 )
 
 const (
-	maxBlockSize = 128
+	maxBlockSize = 1024
 )
 
 // Written once and only read after, no need for mutexes

@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"math/rand"
 	"sync"
 
@@ -9,6 +10,11 @@ import (
 
 	log "github.com/inconshreveable/log15"
 	"github.com/joonnna/blocks/protobuf"
+	"github.com/joonnna/ifrit"
+)
+
+var (
+	errNoSignature = "Message contained nil signature"
 )
 
 type state struct {
@@ -18,31 +24,35 @@ type state struct {
 	localPeer  *peer
 	inProgress *block
 
+	ifrit *ifrit.Client
+
+	// DO NOT SET TO TRUE, only for skipping signature checks in test code
+	skipSignatures bool
+
 	// Experiments only
-	round                  func() uint32
 	prevRoundNumber        uint32
 	convergeMap            map[string]uint32
 	converged              bool
-	experimentParticipants int
+	experimentParticipants uint32
 }
 
-func newState(localId string, httpAddr string, round func() uint32, hosts int) *state {
+func newState(ifrit *ifrit.Client, httpAddr string, hosts uint32) *state {
 	peerMap := make(map[string]*peer)
 	localPeer := &peer{
-		id:       localId,
+		id:       ifrit.Id(),
 		httpAddr: httpAddr,
 	}
-	peerMap[localId] = localPeer
+	peerMap[localPeer.id] = localPeer
 
 	return &state{
 		peerMap:    peerMap,
 		pool:       newEntryPool(),
 		localPeer:  localPeer,
 		inProgress: createBlock(nil),
-		round:      round,
+		ifrit:      ifrit,
 		// Experiment hosts might fail, will never register convergence if anyone fails
 		// 10% failsafe
-		experimentParticipants: int(float32(hosts) * 0.90),
+		experimentParticipants: uint32(float32(hosts) * 0.90),
 		convergeMap:            make(map[string]uint32),
 	}
 }
@@ -64,6 +74,10 @@ func (s *state) bytes() ([]byte, error) {
 				RootHash:    p.getRootHash(),
 				PrevHash:    p.getPrevHash(),
 				HttpAddr:    p.httpAddr,
+				Signature: &blockchain.Signature{
+					R: p.getR(),
+					S: p.getS(),
+				},
 			}
 
 			m.Peers[p.id] = s
@@ -104,8 +118,8 @@ func (s *state) merge(other *blockchain.State) ([]byte, error) {
 
 func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 	var favourites []*peer
-	var numVotes int = 0
-	blockVotes := make(map[string]int)
+	var numVotes uint32 = 0
+	blockVotes := make(map[string]uint32)
 
 	for id, p := range peers {
 		if id == s.localPeer.id {
@@ -150,13 +164,27 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 
 		favPeer := favourites[idx]
 		s.localPeer.increment(favPeer.getRootHash(), favPeer.getPrevHash(), favPeer.getEntries())
+		err := s.sign(s.localPeer)
+		if err != nil {
+			log.Error(err.Error())
+		}
+
+		s.pool.resetFavorite()
+		s.pool.resetMissing()
+		for _, h := range favPeer.getEntries() {
+			key := string(h)
+			s.pool.addFavorite(key)
+			if !s.pool.isPending(key) {
+				s.pool.addMissing(key)
+			}
+		}
 		//log.Debug("New favourite block", "rootHash", string(favPeer.getRootHash()), "prevHash", string(favPeer.getPrevHash()))
 	}
 
 	// Only 1 favourite, have seen atlest 90% of expected hosts and they have all voted
 	// for the single favourite
-	if len(favourites) == 1 && len(s.peerMap) >= s.experimentParticipants && numVotes >= s.experimentParticipants && !s.converged {
-		new := s.round() - s.prevRoundNumber
+	if len(favourites) == 1 && uint32(len(s.peerMap)) >= s.experimentParticipants && numVotes >= s.experimentParticipants && !s.converged {
+		new := s.ifrit.GetGossipRounds() - s.prevRoundNumber
 		s.convergeMap[string(favourites[0].getRootHash())] = new
 		s.converged = true
 		log.Info("Converged", "rounds", new)
@@ -165,17 +193,45 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 }
 
 func (s *state) mergePeer(p *blockchain.PeerState) {
+	var r, sign []byte
+
 	if p.GetEntryHashes() == nil {
 		return
 	}
 
 	if existingPeer := s.peerMap[p.GetId()]; existingPeer != nil {
 		if p.GetEpoch() > existingPeer.getEpoch() {
-			existingPeer.update(p.GetEpoch(), p.GetEntryHashes(), p.GetRootHash(), p.GetPrevHash())
+			if !s.skipSignatures {
+				signature := p.GetSignature()
+				if signature == nil {
+					log.Error(errNoSignature)
+					return
+				}
 
-			s.mergeMissingEntries(p.GetEntryHashes())
+				r = signature.GetR()
+				sign = signature.GetS()
+
+				if valid := s.checkSignature(p, r, sign); !valid {
+					return
+				}
+			}
+			existingPeer.update(p.GetEpoch(), p.GetEntryHashes(), p.GetRootHash(), p.GetPrevHash(), r, sign)
 		}
 	} else {
+		if !s.skipSignatures {
+			signature := p.GetSignature()
+			if signature == nil {
+				log.Error(errNoSignature)
+				return
+			}
+
+			r = signature.GetR()
+			sign = signature.GetS()
+
+			if valid := s.checkSignature(p, r, sign); !valid {
+				return
+			}
+		}
 		newPeer := &peer{
 			id:       p.GetId(),
 			entries:  p.GetEntryHashes(),
@@ -183,14 +239,15 @@ func (s *state) mergePeer(p *blockchain.PeerState) {
 			prevHash: p.GetPrevHash(),
 			epoch:    p.GetEpoch(),
 			httpAddr: p.GetHttpAddr(),
+			r:        r,
+			s:        sign,
 		}
 
 		s.peerMap[newPeer.id] = newPeer
-
-		s.mergeMissingEntries(p.GetEntryHashes())
 	}
 }
 
+/*
 func (s *state) mergeMissingEntries(entries [][]byte) {
 	for _, e := range entries {
 		key := string(e)
@@ -200,6 +257,7 @@ func (s *state) mergeMissingEntries(entries [][]byte) {
 		}
 	}
 }
+*/
 
 func (s *state) add(e *entry) error {
 	s.Lock()
@@ -209,15 +267,21 @@ func (s *state) add(e *entry) error {
 }
 
 func (s *state) addNonLock(e *entry) error {
-	s.pool.addPending(e)
+	err := s.pool.addPending(e)
+	if err != nil {
+		return err
+	}
 
-	err := s.inProgress.add(e)
-
+	err = s.inProgress.add(e)
 	if err != nil && err != errFullBlock {
 		log.Error(err.Error())
 		return err
 	} else if err == errFullBlock && !s.localPeer.hasFavourite() {
 		s.localPeer.addBlock(s.inProgress)
+		err := s.sign(s.localPeer)
+		if err != nil {
+			log.Error(err.Error())
+		}
 	}
 
 	return nil
@@ -234,15 +298,12 @@ func (s *state) mergeResponse(r *blockchain.StateResponse) {
 
 	for _, e := range r.GetEntries() {
 		key := string(e.GetHash())
-		if s.pool.isMissing(key) || s.pool.isPending(key) {
-			log.Debug("Got missing entry in response", "amount", len(s.pool.getAllMissing()))
-			s.pool.removeMissing(key)
+		if s.pool.isMissing(key) {
 			if !s.pool.isPending(key) {
 				newEntry := &entry{data: e.GetContent(), hash: e.GetHash()}
-				err := s.addNonLock(newEntry)
-				if err != nil {
-					log.Error(err.Error())
-				}
+				s.pool.missingToPending(newEntry)
+
+				log.Debug("Got missing entry in response, still missing", "amount", len(s.pool.getAllMissing()))
 			}
 		}
 	}
@@ -293,12 +354,58 @@ func (s *state) newRound() *block {
 
 	if full := s.pool.fillWithPending(s.inProgress); full {
 		s.localPeer.addBlock(s.inProgress)
+		err := s.sign(s.localPeer)
+		if err != nil {
+			log.Error(err.Error())
+		}
 	}
 
 	s.converged = false
-	s.prevRoundNumber = s.round()
+	s.prevRoundNumber = s.ifrit.GetGossipRounds()
 
 	return new
+}
+
+func (s *state) sign(p *peer) error {
+	msg := &blockchain.PeerState{
+		Id:          p.id,
+		EntryHashes: p.getEntries(),
+		RootHash:    p.getRootHash(),
+		PrevHash:    p.getPrevHash(),
+		Epoch:       p.getEpoch(),
+		HttpAddr:    p.httpAddr,
+	}
+
+	bytes, err := proto.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	r, sign, err := s.ifrit.Sign(bytes)
+	if err != nil {
+		return err
+	}
+
+	p.addSignature(r, sign)
+
+	return nil
+}
+
+func (s *state) checkSignature(p *blockchain.PeerState, r, sign []byte) bool {
+	if r == nil || sign == nil {
+		log.Error(errNoSignature)
+		return false
+	}
+
+	p.Signature = nil
+
+	bytes, err := proto.Marshal(p)
+	if err != nil {
+		log.Error(err.Error())
+		return false
+	}
+
+	return s.ifrit.VerifySignature(r, sign, bytes, p.GetId())
 }
 
 func (s *state) getHttpAddrs() []string {
@@ -314,4 +421,33 @@ func (s *state) getHttpAddrs() []string {
 	}
 
 	return ret
+}
+
+func (s *state) getConvergeValue(hash string) []byte {
+	s.RLock()
+	defer s.RUnlock()
+
+	conv, ok := s.convergeMap[hash]
+	if !ok {
+		log.Error("Convergence not found", "hash", hash)
+		return nil
+	}
+
+	var b bytes.Buffer
+
+	res := struct {
+		Hash     string
+		Converge uint32
+	}{
+		hash,
+		conv,
+	}
+
+	err := json.NewEncoder(&b).Encode(res)
+	if err != nil {
+		log.Error(err.Error())
+		return nil
+	}
+
+	return b.Bytes()
 }

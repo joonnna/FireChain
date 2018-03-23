@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -104,38 +105,97 @@ func (suite *PoolTestSuite) TestEmptyDiff() {
 	}
 
 	diff := suite.p.diff(nil)
-	assert.Equal(suite.T(), len(suite.p.pending), len(diff), "Passing nil should return all pending")
+	assert.Nil(suite.T(), diff, "Passing nil to diff should return nil")
 
-	for _, e := range diff {
-		assert.True(suite.T(), suite.p.isPending(string(e.GetHash())), "Content not equal")
-	}
+	var empty [][]byte
+
+	newDiff := suite.p.diff(empty)
+	assert.Nil(suite.T(), newDiff, "Passing empty slice to diff should return nil")
 }
 
 func (suite *PoolTestSuite) TestDiff() {
-	other := make(map[string]bool)
+	var other [][]byte
+
 	notShared := make(map[string]bool)
 
-	numNotShared := 10
+	requestSize := 5
+	local := 10
 
-	for i := 0; i < numNotShared; i++ {
+	for i := 0; i < local; i++ {
 		e := &entry{
-			data: []byte(fmt.Sprintf("testdata%d", i)),
 			hash: []byte(fmt.Sprintf("testhash%d", i)),
 		}
-		notShared[string(e.hash)] = true
 		suite.p.addPending(e)
-	}
-
-	for i := 15; i < 20; i++ {
-		h := fmt.Sprintf("testhash%d", i)
-		other[h] = true
+		if i < requestSize {
+			other = append(other, e.hash)
+			notShared[string(e.hash)] = true
+		}
 	}
 
 	diff := suite.p.diff(other)
-	assert.Equal(suite.T(), len(diff), numNotShared, "Diff returns wrong amount of entries")
+	assert.Equal(suite.T(), len(diff), requestSize, "Diff returns wrong amount of entries")
 
 	for _, e := range diff {
 		assert.NotNil(suite.T(), notShared[string(e.GetHash())], "Diff returns wrong entries")
 	}
+}
 
+func (suite *PoolTestSuite) TestMissingToPendingNonFull() {
+	e := &entry{hash: []byte("testhash")}
+
+	key := string(e.hash)
+
+	suite.p.addMissing(key)
+
+	suite.p.missingToPending(e)
+
+	assert.True(suite.T(), suite.p.isPending(key), "Entry is not present in pending")
+}
+
+func (suite *PoolTestSuite) TestMissingToPendingFull() {
+	suite.p.cap = 1
+
+	e1 := &entry{hash: []byte("testhash1"), data: []byte("1")}
+	k1 := string(e1.hash)
+
+	err := suite.p.addPending(e1)
+	require.NoError(suite.T(), err, "Pending pool should not be full")
+
+	require.True(suite.T(), suite.p.full, "Pending pool is not full")
+
+	e2 := &entry{hash: []byte("testhash2"), data: []byte("2")}
+	k2 := string(e2.hash)
+
+	suite.p.addMissing(k2)
+
+	suite.p.missingToPending(e2)
+
+	assert.True(suite.T(), suite.p.isPending(k2), "Entry is not present in pending")
+	assert.False(suite.T(), suite.p.isPending(k1), "Entry should be removed from pool")
+	require.True(suite.T(), suite.p.full, "Pending pool is not full after entry switch")
+}
+
+func (suite *PoolTestSuite) TestMissingToPendingFavorite() {
+	suite.p.cap = 1
+
+	e1 := &entry{hash: []byte("testhash1"), data: []byte("1")}
+	k1 := string(e1.hash)
+
+	err := suite.p.addPending(e1)
+	require.NoError(suite.T(), err, "Pending pool should not be full")
+
+	suite.p.addFavorite(k1)
+
+	require.True(suite.T(), suite.p.full, "Pending pool is not full")
+
+	e2 := &entry{hash: []byte("testhash2"), data: []byte("2")}
+	k2 := string(e2.hash)
+
+	suite.p.addMissing(k2)
+
+	suite.p.missingToPending(e2)
+
+	assert.False(suite.T(), suite.p.isPending(k2), "Non-favorite entry switched replaced favorite entry")
+	assert.True(suite.T(), suite.p.isPending(k1), "Favorite entry removed")
+	require.True(suite.T(), suite.p.full, "Pending pool is not full after attempted switch")
 }
