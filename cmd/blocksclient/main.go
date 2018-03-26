@@ -49,7 +49,7 @@ func addPeriodically(c *blocks.Client) {
 func main() {
 	var caAddr, entry, vizAddr, expAddr string
 	var logging bool
-	var saturation, hosts, blockPeriod uint
+	var hosts, blockPeriod uint
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -59,7 +59,6 @@ func main() {
 	args.StringVar(&vizAddr, "viz", "", "address(ip:port) of visualizer")
 	args.StringVar(&expAddr, "exp", "", "address of where to send experiment results")
 	args.BoolVar(&logging, "log", false, "Bool deciding whether to log")
-	args.UintVar(&saturation, "wait", 0, "Timeout to start creating block content")
 	args.UintVar(&hosts, "hosts", 0, "How many participants in experiment")
 	args.UintVar(&blockPeriod, "btime", 10, "Period between block chosing")
 	args.Parse(os.Args[1:])
@@ -95,7 +94,7 @@ func main() {
 		VisAddr:    vizAddr,
 	}
 
-	c, err := blocks.NewClient(conf, uint32(saturation), uint32(hosts), uint32(blockPeriod), expAddr)
+	c, err := blocks.NewClient(conf, uint32(hosts), uint32(blockPeriod), expAddr)
 	if err != nil {
 		log.Error(err.Error())
 		panic(err)
@@ -103,7 +102,7 @@ func main() {
 
 	go c.Start()
 
-	time.Sleep(time.Minute * time.Duration(saturation))
+	c.WaitExp()
 	fillFirstBlock(c)
 	go addPeriodically(c)
 

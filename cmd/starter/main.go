@@ -42,7 +42,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string,
 				CaAddr:     ca,
 			}
 
-			c, err := blocks.NewClient(conf, 0, 10, 5, "")
+			c, err := blocks.NewClient(conf, 10, 5, "")
 			if err != nil {
 				fmt.Println(err)
 				continue

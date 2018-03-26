@@ -16,8 +16,12 @@ import (
 	"github.com/joonnna/ifrit/netutil"
 )
 
+const (
+	httpPort = 7500
+)
+
 func initHttp() (net.Listener, error) {
-	l, err := netutil.ListenOnPort(7500)
+	l, err := netutil.ListenOnPort(httpPort)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
@@ -31,6 +35,7 @@ func (c *Chain) startHttp() {
 
 	r.HandleFunc("/state", c.stateHandler)
 	r.HandleFunc("/hosts", c.hostsHandler)
+	r.HandleFunc("/exp", c.expHandler)
 
 	err := http.Serve(c.httpListener, r)
 	if err != nil {
@@ -69,6 +74,15 @@ func (c *Chain) hostsHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Error(err.Error())
 		}
+	}
+}
+
+func (c *Chain) expHandler(w http.ResponseWriter, r *http.Request) {
+	io.Copy(ioutil.Discard, r.Body)
+	r.Body.Close()
+
+	if !c.isExp() {
+		close(c.ExpChan)
 	}
 }
 

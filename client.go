@@ -17,8 +17,8 @@ var (
 	errInvalidData = errors.New("given data is empty or nil")
 )
 
-func NewClient(conf *ifrit.Config, timeout, hosts, period uint32, expAddr string) (*Client, error) {
-	c, err := core.NewChain(conf, timeout, hosts, period, expAddr)
+func NewClient(conf *ifrit.Config, hosts, period uint32, expAddr string) (*Client, error) {
+	c, err := core.NewChain(conf, hosts, period, expAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +51,10 @@ func (c *Client) Add(data []byte) error {
 		return errInvalidData
 	}
 	return c.ch.Add(data)
+}
+
+func (c *Client) WaitExp() {
+	<-c.ch.ExpChan
 }
 
 func CmpStates(first, second []byte) (uint64, error) {

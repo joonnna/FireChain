@@ -3,13 +3,16 @@ package core
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/joonnna/blocks/protobuf"
 	"github.com/joonnna/ifrit"
+	"github.com/joonnna/ifrit/netutil"
 
 	log "github.com/inconshreveable/log15"
 )
@@ -47,6 +50,10 @@ type Chain struct {
 	saturationTimeout time.Duration
 	experiment        bool
 	expAddr           string
+	httpAddr          string
+	ExpChan           chan bool
+	expStarted        bool
+	expMutex          sync.Mutex
 }
 
 /*
@@ -55,7 +62,7 @@ type ExpArgs struct {
 	NumHosts          uint32
 }
 */
-
+/*
 type test interface {
 	Bytes()
 	Merge()
@@ -63,8 +70,9 @@ type test interface {
 	NewRound()
 	Add()
 }
+*/
 
-func NewChain(conf *ifrit.Config, timeout, hosts, blockPeriod uint32, expAddr string) (*Chain, error) {
+func NewChain(conf *ifrit.Config, hosts, blockPeriod uint32, expAddr string) (*Chain, error) {
 	i, err := ifrit.NewClient(conf)
 	if err != nil {
 		return nil, err
@@ -75,31 +83,36 @@ func NewChain(conf *ifrit.Config, timeout, hosts, blockPeriod uint32, expAddr st
 		return nil, err
 	}
 
+	ip := netutil.GetLocalIP()
+	port := strings.Split(l.Addr().String(), ":")[1]
+	httpAddr := fmt.Sprintf("%s:%s", ip, port)
+
 	exp := false
 	if expAddr != "" {
 		exp = true
 	}
 
 	return &Chain{
-		blocks:            make(map[uint64]*block),
-		state:             newState(i, l.Addr().String(), hosts),
-		ifrit:             i,
-		httpListener:      l,
-		exitChan:          make(chan bool),
-		blockPeriod:       time.Minute * time.Duration(blockPeriod),
-		saturationTimeout: time.Minute * time.Duration(timeout),
-		experiment:        exp,
-		expAddr:           expAddr,
+		blocks:       make(map[uint64]*block),
+		state:        newState(i, httpAddr, hosts),
+		ifrit:        i,
+		httpListener: l,
+		exitChan:     make(chan bool),
+		blockPeriod:  time.Minute * time.Duration(blockPeriod),
+		ExpChan:      make(chan bool),
+		experiment:   exp,
+		expAddr:      expAddr,
+		httpAddr:     httpAddr,
 	}, nil
 }
 
 func (c *Chain) Start() {
-	c.ifrit.RegisterGossipHandler(c.handleMsg)
-	c.ifrit.RegisterResponseHandler(c.handleResponse)
 	go c.ifrit.Start()
 	go c.startHttp()
 
-	time.Sleep(c.saturationTimeout)
+	<-c.ExpChan
+	c.ifrit.RegisterGossipHandler(c.handleMsg)
+	c.ifrit.RegisterResponseHandler(c.handleResponse)
 	c.ifrit.RecordGossipRounds()
 	c.blockLoop()
 }
@@ -111,7 +124,8 @@ func (c Chain) Addr() string {
 
 // Returns the address of the http module of the chain, used for worm input.
 func (c Chain) HttpAddr() string {
-	return c.httpListener.Addr().String()
+	//return c.httpListener.Addr().String()
+	return c.httpAddr
 }
 
 func (c *Chain) Stop() {
@@ -251,6 +265,18 @@ func (c *Chain) addToQueue(data []byte) {
 	defer c.queueMutex.Unlock()
 
 	c.queuedData = append(c.queuedData, data)
+}
+
+func (c *Chain) isExp() bool {
+	c.expMutex.Lock()
+	defer c.expMutex.Unlock()
+
+	if c.expStarted {
+		return true
+	} else {
+		c.expStarted = true
+		return false
+	}
 }
 
 func hashBytes(data []byte) []byte {

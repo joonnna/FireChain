@@ -52,7 +52,7 @@ func newState(ifrit *ifrit.Client, httpAddr string, hosts uint32) *state {
 		ifrit:      ifrit,
 		// Experiment hosts might fail, will never register convergence if anyone fails
 		// 10% failsafe
-		experimentParticipants: uint32(float32(hosts) * 0.90),
+		experimentParticipants: hosts,
 		convergeMap:            make(map[string]uint32),
 	}
 }
@@ -183,7 +183,7 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 
 	// Only 1 favourite, have seen atlest 90% of expected hosts and they have all voted
 	// for the single favourite
-	if len(favourites) == 1 && uint32(len(s.peerMap)) >= s.experimentParticipants && numVotes >= s.experimentParticipants && !s.converged {
+	if uint32(len(s.peerMap)) >= s.experimentParticipants && numVotes >= s.experimentParticipants && !s.converged {
 		new := s.ifrit.GetGossipRounds() - s.prevRoundNumber
 		s.convergeMap[string(favourites[0].getRootHash())] = new
 		s.converged = true
@@ -429,7 +429,7 @@ func (s *state) getConvergeValue(hash string) []byte {
 
 	conv, ok := s.convergeMap[hash]
 	if !ok {
-		log.Error("Convergence not found", "hash", hash)
+		log.Error("Convergence not found", "hash", "hosts", hash, s.experimentParticipants)
 		return nil
 	}
 
@@ -438,9 +438,11 @@ func (s *state) getConvergeValue(hash string) []byte {
 	res := struct {
 		Hash     string
 		Converge uint32
+		Hosts    uint32
 	}{
 		hash,
 		conv,
+		s.experimentParticipants,
 	}
 
 	err := json.NewEncoder(&b).Encode(res)
