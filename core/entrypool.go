@@ -157,12 +157,10 @@ func (e *entryPool) resetFavorite() {
 }
 
 func (e *entryPool) getAllMissing() [][]byte {
-	ret := make([][]byte, len(e.missing))
+	ret := make([][]byte, 0, len(e.missing))
 
-	idx := 0
 	for k, _ := range e.missing {
-		ret[idx] = []byte(k)
-		idx++
+		ret = append(ret, []byte(k))
 	}
 
 	return ret
@@ -197,12 +195,10 @@ func (e *entryPool) fillWithPending(b *block) bool {
 }
 
 func (e *entryPool) getAllPending() []*entry {
-	idx := 0
-	ret := make([]*entry, len(e.pending))
+	ret := make([]*entry, 0, len(e.pending))
 
 	for _, v := range e.pending {
-		ret[idx] = v
-		idx++
+		ret = append(ret, v)
 	}
 	return ret
 }

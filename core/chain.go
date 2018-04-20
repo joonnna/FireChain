@@ -214,10 +214,10 @@ func (c *Chain) blockLoop() {
 }
 
 func (c *Chain) pickFavouriteBlock() {
-	newBlock := c.state.newRound()
+	newBlock, expData := c.state.newRound()
 
 	if doExp := c.experiment; doExp {
-		c.sendResults(newBlock.getRootHash())
+		c.sendResults(expData)
 	}
 
 	// TODO if we get error here, we need a fallback strat

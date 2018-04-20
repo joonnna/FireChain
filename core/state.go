@@ -15,6 +15,7 @@ import (
 
 var (
 	errNoSignature = "Message contained nil signature"
+	errNoHashes    = "Peer had no hashes"
 )
 
 type state struct {
@@ -50,8 +51,6 @@ func newState(ifrit *ifrit.Client, httpAddr string, hosts uint32) *state {
 		localPeer:  localPeer,
 		inProgress: createBlock(nil),
 		ifrit:      ifrit,
-		// Experiment hosts might fail, will never register convergence if anyone fails
-		// 10% failsafe
 		experimentParticipants: hosts,
 		convergeMap:            make(map[string]uint32),
 	}
@@ -118,14 +117,15 @@ func (s *state) merge(other *blockchain.State) ([]byte, error) {
 
 func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 	var favourites []*peer
-	var numVotes uint32 = 0
-	blockVotes := make(map[string]uint32)
+	blockVotes := make(map[string]int)
+
+	numVotes := 0
 
 	for id, p := range peers {
 		if id == s.localPeer.id {
 			continue
 		}
-		s.mergePeer(p)
+		s.mergePeer(p, id)
 	}
 
 	for _, p := range s.peerMap {
@@ -156,6 +156,8 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 
 	//log.Debug("Block voting", "Options", len(blockVotes), "Favourites", len(favourites))
 
+	log.Debug("Convergence progress", "ifrit_alive", len(s.ifrit.Members()), "peerMap", len(s.peerMap), "votes", numVotes)
+
 	if numFavs := len(favourites); numFavs >= 1 {
 		idx := 0
 		if numFavs > 1 {
@@ -163,10 +165,18 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 		}
 
 		favPeer := favourites[idx]
+
+		equal := s.localPeer.isEqual(favPeer)
+
 		s.localPeer.increment(favPeer.getRootHash(), favPeer.getPrevHash(), favPeer.getEntries())
 		err := s.sign(s.localPeer)
 		if err != nil {
 			log.Error(err.Error())
+		}
+
+		// favoured the same block already, pools are already correct
+		if equal {
+			return
 		}
 
 		s.pool.resetFavorite()
@@ -178,28 +188,36 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 				s.pool.addMissing(key)
 			}
 		}
-		//log.Debug("New favourite block", "rootHash", string(favPeer.getRootHash()), "prevHash", string(favPeer.getPrevHash()))
+		k := string(favPeer.getRootHash())
+		s.convergeMap[k] = (s.ifrit.GetGossipRounds() - s.prevRoundNumber)
 	}
+	//log.Debug("New favourite block", "rootHash", string(favPeer.getRootHash()), "prevHash", string(favPeer.getPrevHash()))
 
-	// Only 1 favourite, have seen atlest 90% of expected hosts and they have all voted
-	// for the single favourite
-	if uint32(len(s.peerMap)) >= s.experimentParticipants && numVotes >= s.experimentParticipants && !s.converged {
-		new := s.ifrit.GetGossipRounds() - s.prevRoundNumber
-		s.convergeMap[string(favourites[0].getRootHash())] = new
-		s.converged = true
-		log.Info("Converged", "rounds", new)
-	}
+	/*
+		participants := len(s.ifrit.Members())
+		seen := len(s.peerMap)
+
+		if seen >= participants && numVotes >= seen && !s.converged {
+			new := s.ifrit.GetGossipRounds() - s.prevRoundNumber
+			s.convergeMap[string(favourites[0].getRootHash())] = new
+			s.converged = true
+			log.Info("Converged", "rounds", new)
+		} else {
+			log.Debug("Convergence progress", "ifrit_alive", participants, "peerMap", len(s.peerMap), "votes", numVotes)
+		}
+	*/
 
 }
 
-func (s *state) mergePeer(p *blockchain.PeerState) {
+func (s *state) mergePeer(p *blockchain.PeerState, id string) {
 	var r, sign []byte
 
 	if p.GetEntryHashes() == nil {
+		log.Debug(errNoHashes)
 		return
 	}
 
-	if existingPeer := s.peerMap[p.GetId()]; existingPeer != nil {
+	if existingPeer, ok := s.peerMap[id]; ok {
 		if p.GetEpoch() > existingPeer.getEpoch() {
 			if !s.skipSignatures {
 				signature := p.GetSignature()
@@ -233,7 +251,7 @@ func (s *state) mergePeer(p *blockchain.PeerState) {
 			}
 		}
 		newPeer := &peer{
-			id:       p.GetId(),
+			id:       id,
 			entries:  p.GetEntryHashes(),
 			rootHash: p.GetRootHash(),
 			prevHash: p.GetPrevHash(),
@@ -243,7 +261,7 @@ func (s *state) mergePeer(p *blockchain.PeerState) {
 			s:        sign,
 		}
 
-		s.peerMap[newPeer.id] = newPeer
+		s.peerMap[id] = newPeer
 	}
 }
 
@@ -282,6 +300,9 @@ func (s *state) addNonLock(e *entry) error {
 		if err != nil {
 			log.Error(err.Error())
 		}
+
+		key := string(s.localPeer.getRootHash())
+		s.convergeMap[key] = (s.ifrit.GetGossipRounds() - s.prevRoundNumber)
 	}
 
 	return nil
@@ -309,7 +330,7 @@ func (s *state) mergeResponse(r *blockchain.StateResponse) {
 	}
 }
 
-func (s *state) newRound() *block {
+func (s *state) newRound() (*block, []byte) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -360,10 +381,13 @@ func (s *state) newRound() *block {
 		}
 	}
 
-	s.converged = false
-	s.prevRoundNumber = s.ifrit.GetGossipRounds()
+	convergeValues := s.getConvergeValue(string(new.getRootHash()))
 
-	return new
+	s.prevRoundNumber = s.ifrit.GetGossipRounds()
+	s.convergeMap = nil
+	s.convergeMap = make(map[string]uint32)
+
+	return new, convergeValues
 }
 
 func (s *state) sign(p *peer) error {
@@ -412,21 +436,16 @@ func (s *state) getHttpAddrs() []string {
 	s.RLock()
 	defer s.RUnlock()
 
-	idx := 0
-	ret := make([]string, len(s.peerMap))
+	ret := make([]string, 0, len(s.peerMap))
 
 	for _, p := range s.peerMap {
-		ret[idx] = p.httpAddr
-		idx++
+		ret = append(ret, p.httpAddr)
 	}
 
 	return ret
 }
 
 func (s *state) getConvergeValue(hash string) []byte {
-	s.RLock()
-	defer s.RUnlock()
-
 	conv, ok := s.convergeMap[hash]
 	if !ok {
 		log.Error("Convergence not found", "hash", "hosts", hash, s.experimentParticipants)
@@ -438,11 +457,9 @@ func (s *state) getConvergeValue(hash string) []byte {
 	res := struct {
 		Hash     string
 		Converge uint32
-		Hosts    uint32
 	}{
 		hash,
 		conv,
-		s.experimentParticipants,
 	}
 
 	err := json.NewEncoder(&b).Encode(res)

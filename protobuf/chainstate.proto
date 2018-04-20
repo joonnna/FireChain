@@ -27,7 +27,6 @@ message Signature {
     bytes s = 2;
 }
 
-
 message PeerState {
     string id = 1;
     repeated bytes entryHashes = 2;
@@ -40,6 +39,11 @@ message PeerState {
 	// TODO solve this differently
 	string httpAddr = 7;
 }
+
+message PeerInfo {
+
+}
+
 
 message State {
     map<string, PeerState> peers = 1;

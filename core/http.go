@@ -104,10 +104,8 @@ func (c *Chain) getChain() ([]byte, error) {
 	return proto.Marshal(payload)
 }
 
-func (c *Chain) sendResults(blockHash []byte) {
-	res := c.state.getConvergeValue(string(blockHash))
-
-	resp, err := http.Post(c.expAddr, "application/json", bytes.NewReader(res))
+func (c *Chain) sendResults(data []byte) {
+	resp, err := http.Post(c.expAddr, "application/json", bytes.NewReader(data))
 	if err != nil {
 		log.Error(err.Error())
 		return

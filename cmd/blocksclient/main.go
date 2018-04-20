@@ -19,8 +19,8 @@ import (
 )
 
 func fillFirstBlock(c *blocks.Client) {
-	for {
-		buf := make([]byte, 50)
+	for i := 0; i < 30; i++ {
+		buf := make([]byte, 300)
 		_, err := rand.Read(buf)
 		if err != nil {
 			fmt.Println(err)
@@ -36,7 +36,7 @@ func fillFirstBlock(c *blocks.Client) {
 func addPeriodically(c *blocks.Client) {
 	for {
 		time.Sleep(time.Second * 50)
-		buf := make([]byte, 50)
+		buf := make([]byte, 300)
 		_, err := rand.Read(buf)
 		if err != nil {
 			fmt.Println(err)
@@ -102,8 +102,9 @@ func main() {
 
 	go c.Start()
 
-	c.WaitExp()
 	fillFirstBlock(c)
+
+	c.WaitExp()
 	go addPeriodically(c)
 
 	channel := make(chan os.Signal, 2)

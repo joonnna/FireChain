@@ -1,5 +1,7 @@
 package core
 
+import "bytes"
+
 // Read/write access to peer objects is regulated by the state mutex.
 // We do not support concurrent state merging, hence, holding state mutex regulates
 // access to all peers.
@@ -84,6 +86,10 @@ func (p *peer) hasFavourite() bool {
 	}
 
 	return true
+}
+
+func (p *peer) isEqual(other *peer) bool {
+	return bytes.Equal(p.rootHash, other.rootHash) && bytes.Equal(p.prevHash, other.prevHash)
 }
 
 /*

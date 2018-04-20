@@ -126,20 +126,20 @@ func (b *block) getRootHash() []byte {
 }
 
 func (b *block) content() [][]byte {
-	ret := make([][]byte, len(b.entries))
+	ret := make([][]byte, 0, len(b.entries))
 
-	for idx, e := range b.entries {
-		ret[idx] = e.data
+	for _, e := range b.entries {
+		ret = append(ret, e.data)
 	}
 
 	return ret
 }
 
 func (b *block) getHashes() [][]byte {
-	ret := make([][]byte, len(b.entries))
+	ret := make([][]byte, 0, len(b.entries))
 
-	for idx, e := range b.entries {
-		ret[idx] = e.hash
+	for _, e := range b.entries {
+		ret = append(ret, e.hash)
 	}
 
 	return ret
