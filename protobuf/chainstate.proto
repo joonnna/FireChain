@@ -41,17 +41,20 @@ message PeerState {
 }
 
 message PeerInfo {
-
+    string id = 1;
+    uint64 epoch = 2;
+    bytes rootHash = 3;
 }
 
 
 message State {
-    map<string, PeerState> peers = 1;
+    map<string, PeerInfo> peers = 1;
     repeated bytes missingEntries = 2;
 }
 
 message StateResponse {
-    repeated BlockEntry entries = 1;
+    repeated PeerState peers = 1;
+    repeated BlockEntry entries = 2;
 }
 
 message WormPayload {

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -72,6 +73,21 @@ type test interface {
 }
 */
 
+func (c *Chain) fillFirstBlock() {
+	for i := 0; i < 5; i++ {
+		buf := make([]byte, 300)
+		_, err := rand.Read(buf)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		err = c.Add(buf)
+		if err != nil {
+			break
+		}
+	}
+}
+
 func NewChain(conf *ifrit.Config, hosts, blockPeriod uint32, expAddr string) (*Chain, error) {
 	i, err := ifrit.NewClient(conf)
 	if err != nil {
@@ -111,9 +127,10 @@ func (c *Chain) Start() {
 	go c.startHttp()
 
 	<-c.ExpChan
+	c.fillFirstBlock()
+	c.ifrit.RecordGossipRounds()
 	c.ifrit.RegisterGossipHandler(c.handleMsg)
 	c.ifrit.RegisterResponseHandler(c.handleResponse)
-	c.ifrit.RecordGossipRounds()
 	c.blockLoop()
 }
 
@@ -169,13 +186,11 @@ func (c *Chain) handleMsg(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	resp, err := c.state.merge(msg)
+	resp, err := c.state.diff(msg)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
 	}
-
-	c.updateState()
 
 	return resp, nil
 }
@@ -227,7 +242,7 @@ func (c *Chain) pickFavouriteBlock() {
 		return
 	}
 
-	log.Info("New block", "rootHash", string(newBlock.getRootHash()), "prevhash", string(newBlock.getPrevHash()))
+	log.Info("New block", "rootHash", string(newBlock.getRootHash()), "prevhash", string(newBlock.getPrevHash()), "number", c.currBlock)
 }
 
 func (c *Chain) updateState() {

@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"math/rand"
 
 	log "github.com/inconshreveable/log15"
 	"github.com/joonnna/blocks/protobuf"
@@ -183,15 +184,37 @@ func (e *entryPool) diff(other [][]byte) []*blockchain.BlockEntry {
 	return ret
 }
 
-func (e *entryPool) fillWithPending(b *block) bool {
+func (e *entryPool) fillWithPending(b *block) {
 	for _, ent := range e.pending {
 		err := b.add(ent)
 		if err == errFullBlock {
-			return true
+			return
 		}
 	}
 
-	return false
+	for {
+		buf := make([]byte, 300)
+		_, err := rand.Read(buf)
+		if err != nil {
+			log.Error(err.Error())
+			continue
+		}
+
+		ent := &entry{
+			data: buf,
+			hash: hashBytes(buf),
+		}
+
+		err = b.add(ent)
+		if err == errFullBlock {
+			return
+		} else {
+			err := e.addPending(ent)
+			if err != nil {
+				log.Error(err.Error())
+			}
+		}
+	}
 }
 
 func (e *entryPool) getAllPending() []*entry {

@@ -1,6 +1,10 @@
 package core
 
-import "bytes"
+import (
+	"bytes"
+
+	"github.com/joonnna/blocks/protobuf"
+)
 
 // Read/write access to peer objects is regulated by the state mutex.
 // We do not support concurrent state merging, hence, holding state mutex regulates
@@ -65,13 +69,6 @@ func (p *peer) addBlock(b *block) {
 	p.epoch++
 }
 
-func (p *peer) increment(rootHash, prevHash []byte, entries [][]byte) {
-	p.epoch++
-	p.entries = entries
-	p.rootHash = rootHash
-	p.prevHash = prevHash
-}
-
 func (p *peer) reset() {
 	p.entries = nil
 	p.rootHash = nil
@@ -90,6 +87,21 @@ func (p *peer) hasFavourite() bool {
 
 func (p *peer) isEqual(other *peer) bool {
 	return bytes.Equal(p.rootHash, other.rootHash) && bytes.Equal(p.prevHash, other.prevHash)
+}
+
+func (p *peer) toPbMsg() *blockchain.PeerState {
+	return &blockchain.PeerState{
+		Id:          p.id,
+		Epoch:       p.epoch,
+		EntryHashes: p.entries,
+		RootHash:    p.rootHash,
+		PrevHash:    p.prevHash,
+		HttpAddr:    p.httpAddr,
+		Signature: &blockchain.Signature{
+			R: p.r,
+			S: p.s,
+		},
+	}
 }
 
 /*

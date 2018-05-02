@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"math/rand"
 	"sync"
 
@@ -14,8 +15,9 @@ import (
 )
 
 var (
-	errNoSignature = "Message contained nil signature"
-	errNoHashes    = "Peer had no hashes"
+	errNoSignature = errors.New("Message contained nil signature")
+	errNoHashes    = errors.New("Peer had no hashes")
+	errNoPeerState = errors.New("No peer table in request")
 )
 
 type state struct {
@@ -61,71 +63,75 @@ func (s *state) bytes() ([]byte, error) {
 	defer s.RUnlock()
 
 	m := &blockchain.State{
-		Peers:          make(map[string]*blockchain.PeerState),
+		Peers:          make(map[string]*blockchain.PeerInfo),
 		MissingEntries: s.pool.getAllMissing(),
 	}
 	for _, p := range s.peerMap {
-		if entries := p.getEntries(); entries != nil {
-			s := &blockchain.PeerState{
-				Id:          p.id,
-				Epoch:       p.getEpoch(),
-				EntryHashes: entries,
-				RootHash:    p.getRootHash(),
-				PrevHash:    p.getPrevHash(),
-				HttpAddr:    p.httpAddr,
-				Signature: &blockchain.Signature{
-					R: p.getR(),
-					S: p.getS(),
-				},
-			}
-
-			m.Peers[p.id] = s
+		s := &blockchain.PeerInfo{
+			Id:       p.id,
+			Epoch:    p.getEpoch(),
+			RootHash: p.getRootHash(),
 		}
+
+		m.Peers[s.GetId()] = s
 	}
 
 	return proto.Marshal(m)
 }
 
-func (s *state) merge(other *blockchain.State) ([]byte, error) {
+func (s *state) diff(other *blockchain.State) ([]byte, error) {
 	s.Lock()
 	defer s.Unlock()
 
+	resp := &blockchain.StateResponse{}
+
 	if peers := other.GetPeers(); peers != nil {
-		s.mergePeers(peers)
+		resp.Peers = s.peersDiff(peers)
 	} else {
-		log.Debug("No peer state")
+		log.Error("No peers state, returning error")
+		return nil, errNoPeerState
 	}
 
 	if entries := other.GetMissingEntries(); entries != nil {
-		resp := &blockchain.StateResponse{
-			Entries: s.pool.diff(entries),
-		}
-
+		resp.Entries = s.pool.diff(entries)
 		log.Debug("Request for missing entries", "amount", len(entries))
-
-		b, err := proto.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-
-		return b, nil
-	} else {
-		log.Debug("Returning nil response")
-		return nil, nil
 	}
+
+	b, err := proto.Marshal(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return b, nil
 }
 
-func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
+func (s *state) peersDiff(peers map[string]*blockchain.PeerInfo) []*blockchain.PeerState {
+	var diff []*blockchain.PeerState
+
+	for _, p := range s.peerMap {
+		if remotePeer, ok := peers[p.id]; ok {
+			if p.getEpoch() > remotePeer.GetEpoch() && !bytes.Equal(p.getRootHash(), remotePeer.GetRootHash()) {
+				diff = append(diff, p.toPbMsg())
+			}
+		} else {
+			diff = append(diff, p.toPbMsg())
+		}
+	}
+
+	return diff
+}
+
+func (s *state) mergePeers(peers []*blockchain.PeerState) {
 	var favourites []*peer
 	blockVotes := make(map[string]int)
 
 	numVotes := 0
 
-	for id, p := range peers {
-		if id == s.localPeer.id {
+	for _, p := range peers {
+		if p.GetId() == s.localPeer.id {
 			continue
 		}
-		s.mergePeer(p, id)
+		s.mergePeer(p)
 	}
 
 	for _, p := range s.peerMap {
@@ -168,16 +174,14 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 
 		equal := s.localPeer.isEqual(favPeer)
 
-		s.localPeer.increment(favPeer.getRootHash(), favPeer.getPrevHash(), favPeer.getEntries())
-		err := s.sign(s.localPeer)
-		if err != nil {
-			log.Error(err.Error())
-		}
-
 		// favoured the same block already, pools are already correct
 		if equal {
 			return
 		}
+
+		s.localPeer.epoch++
+
+		s.updateLocalPeer(favPeer.getRootHash(), favPeer.getPrevHash(), favPeer.getEntries())
 
 		s.pool.resetFavorite()
 		s.pool.resetMissing()
@@ -192,28 +196,21 @@ func (s *state) mergePeers(peers map[string]*blockchain.PeerState) {
 		s.convergeMap[k] = (s.ifrit.GetGossipRounds() - s.prevRoundNumber)
 	}
 	//log.Debug("New favourite block", "rootHash", string(favPeer.getRootHash()), "prevHash", string(favPeer.getPrevHash()))
-
-	/*
-		participants := len(s.ifrit.Members())
-		seen := len(s.peerMap)
-
-		if seen >= participants && numVotes >= seen && !s.converged {
-			new := s.ifrit.GetGossipRounds() - s.prevRoundNumber
-			s.convergeMap[string(favourites[0].getRootHash())] = new
-			s.converged = true
-			log.Info("Converged", "rounds", new)
-		} else {
-			log.Debug("Convergence progress", "ifrit_alive", participants, "peerMap", len(s.peerMap), "votes", numVotes)
-		}
-	*/
-
+	//log.Debug("Convergence progress", "ifrit_alive", participants, "peerMap", len(s.peerMap), "votes", numVotes)
 }
 
-func (s *state) mergePeer(p *blockchain.PeerState, id string) {
+func (s *state) mergePeer(p *blockchain.PeerState) {
 	var r, sign []byte
 
+	if p == nil {
+		log.Debug("nil peer")
+		return
+	}
+
+	id := p.GetId()
+
 	if p.GetEntryHashes() == nil {
-		log.Debug(errNoHashes)
+		log.Debug(errNoHashes.Error())
 		return
 	}
 
@@ -222,7 +219,7 @@ func (s *state) mergePeer(p *blockchain.PeerState, id string) {
 			if !s.skipSignatures {
 				signature := p.GetSignature()
 				if signature == nil {
-					log.Error(errNoSignature)
+					log.Error(errNoSignature.Error())
 					return
 				}
 
@@ -239,7 +236,7 @@ func (s *state) mergePeer(p *blockchain.PeerState, id string) {
 		if !s.skipSignatures {
 			signature := p.GetSignature()
 			if signature == nil {
-				log.Error(errNoSignature)
+				log.Error(errNoSignature.Error())
 				return
 			}
 
@@ -313,7 +310,7 @@ func (s *state) mergeResponse(r *blockchain.StateResponse) {
 	defer s.Unlock()
 
 	if r == nil {
-		log.Debug("Response is nil")
+		log.Error("Response is nil")
 		return
 	}
 
@@ -328,6 +325,8 @@ func (s *state) mergeResponse(r *blockchain.StateResponse) {
 			}
 		}
 	}
+
+	s.mergePeers(r.GetPeers())
 }
 
 func (s *state) newRound() (*block, []byte) {
@@ -335,6 +334,8 @@ func (s *state) newRound() (*block, []byte) {
 	defer s.Unlock()
 
 	log.Debug("Picking next block")
+
+	convergeValues := s.getConvergeValue(string(s.localPeer.getRootHash()))
 
 	new := createBlock(s.localPeer.getPrevHash())
 
@@ -373,19 +374,19 @@ func (s *state) newRound() (*block, []byte) {
 
 	s.inProgress = createBlock(new.getRootHash())
 
-	if full := s.pool.fillWithPending(s.inProgress); full {
-		s.localPeer.addBlock(s.inProgress)
-		err := s.sign(s.localPeer)
-		if err != nil {
-			log.Error(err.Error())
-		}
-	}
-
-	convergeValues := s.getConvergeValue(string(new.getRootHash()))
-
 	s.prevRoundNumber = s.ifrit.GetGossipRounds()
 	s.convergeMap = nil
 	s.convergeMap = make(map[string]uint32)
+
+	s.pool.fillWithPending(s.inProgress)
+	s.localPeer.addBlock(s.inProgress)
+	err := s.sign(s.localPeer)
+	if err != nil {
+		log.Error(err.Error())
+	}
+
+	key := string(s.localPeer.getRootHash())
+	s.convergeMap[key] = 0
 
 	return new, convergeValues
 }
@@ -417,7 +418,7 @@ func (s *state) sign(p *peer) error {
 
 func (s *state) checkSignature(p *blockchain.PeerState, r, sign []byte) bool {
 	if r == nil || sign == nil {
-		log.Error(errNoSignature)
+		log.Error(errNoSignature.Error())
 		return false
 	}
 
@@ -445,10 +446,25 @@ func (s *state) getHttpAddrs() []string {
 	return ret
 }
 
+func (s *state) updateLocalPeer(rootHash, prevHash []byte, entries [][]byte) {
+	s.localPeer.entries = entries
+	s.localPeer.rootHash = rootHash
+	s.localPeer.prevHash = prevHash
+
+	err := s.sign(s.localPeer)
+	if err != nil {
+		log.Error(err.Error())
+	}
+}
+
 func (s *state) getConvergeValue(hash string) []byte {
 	conv, ok := s.convergeMap[hash]
 	if !ok {
-		log.Error("Convergence not found", "hash", "hosts", hash, s.experimentParticipants)
+		log.Error("Convergence not found", "hash", hash)
+		for k, v := range s.convergeMap {
+			log.Debug("Map entries", "hash", k, "rounds", v)
+		}
+
 		return nil
 	}
 

@@ -1,15 +1,12 @@
 package main
 
 import (
-	"crypto/rand"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
 	"strings"
 	"syscall"
-	"time"
 
 	_ "net/http/pprof"
 
@@ -17,34 +14,6 @@ import (
 	"github.com/joonnna/blocks"
 	"github.com/joonnna/ifrit"
 )
-
-func fillFirstBlock(c *blocks.Client) {
-	for i := 0; i < 30; i++ {
-		buf := make([]byte, 300)
-		_, err := rand.Read(buf)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-		err = c.Add(buf)
-		if err != nil {
-			break
-		}
-	}
-}
-
-func addPeriodically(c *blocks.Client) {
-	for {
-		time.Sleep(time.Second * 50)
-		buf := make([]byte, 300)
-		_, err := rand.Read(buf)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-		c.Add(buf)
-	}
-}
 
 func main() {
 	var caAddr, entry, vizAddr, expAddr string
@@ -101,11 +70,6 @@ func main() {
 	}
 
 	go c.Start()
-
-	fillFirstBlock(c)
-
-	c.WaitExp()
-	go addPeriodically(c)
 
 	channel := make(chan os.Signal, 2)
 	signal.Notify(channel, os.Interrupt, syscall.SIGTERM)

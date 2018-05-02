@@ -50,6 +50,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string,
 
 			clients = append(clients, c.Addr())
 
+			fillFirstBlock(c)
 			go addPeriodically(c)
 
 			requestChan <- c
@@ -70,6 +71,21 @@ func addPeriodically(c *blocks.Client) {
 			continue
 		}
 		c.Add(buf)
+	}
+}
+
+func fillFirstBlock(c *blocks.Client) {
+	for i := 0; i < 5; i++ {
+		buf := make([]byte, 300)
+		_, err := rand.Read(buf)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		err = c.Add(buf)
+		if err != nil {
+			break
+		}
 	}
 }
 
