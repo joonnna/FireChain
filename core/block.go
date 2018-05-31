@@ -16,9 +16,8 @@ var (
 	errNoEntryData       = errors.New("Given entry has nil data")
 )
 
-const (
-	maxBlockSize = 1024
-)
+var entrySize uint32
+var blockSize uint32
 
 // Written once and only read after, no need for mutexes
 type block struct {
@@ -30,15 +29,38 @@ type block struct {
 	maxSize  uint32
 	tree     *merkletree.MerkleTree
 
+	num uint64
+
 	rootHash []byte
 	prevHash []byte
 }
 
 func createBlock(prevHash []byte) *block {
 	return &block{
-		maxSize:  maxBlockSize,
+		maxSize:  blockSize,
 		prevHash: prevHash,
 	}
+}
+
+func createBlockWithContent(prevHash []byte, content [][]byte) (*block, error) {
+	b := &block{
+		maxSize:  blockSize,
+		prevHash: prevHash,
+	}
+
+	for _, c := range content {
+		e := &entry{
+			data: c,
+			hash: hashBytes(c),
+		}
+
+		err := b.addToBlock(e)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return b, nil
 }
 
 func formBlock(data []byte) *block {
@@ -54,7 +76,7 @@ func (b *block) addToBlock(e *entry) error {
 
 	size := uint32(len(e.data))
 
-	if (b.currSize + size) >= b.maxSize {
+	if (b.currSize + size) > b.maxSize {
 		return errFullBlock
 	}
 

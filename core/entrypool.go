@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"math/rand"
+	"time"
 
 	log "github.com/inconshreveable/log15"
 	"github.com/joonnna/blocks/protobuf"
@@ -10,11 +11,6 @@ import (
 
 var (
 	errFullPending = errors.New("Pending queue is full")
-)
-
-// Allow buffering of block entries equal to 30 full blocks
-var (
-	maxSize = maxBlockSize * 30
 )
 
 type entryPool struct {
@@ -28,13 +24,13 @@ type entryPool struct {
 	favorite  map[string]bool
 }
 
-func newEntryPool() *entryPool {
+func newEntryPool(cap uint32) *entryPool {
 	return &entryPool{
 		pending:   make(map[string]*entry),
 		confirmed: make(map[string]*entry),
 		missing:   make(map[string]bool),
 		favorite:  make(map[string]bool),
-		cap:       uint32(maxSize),
+		cap:       cap,
 	}
 }
 
@@ -190,10 +186,12 @@ func (e *entryPool) fillWithPending(b *block) {
 		if err == errFullBlock {
 			return
 		}
+		e.addFavorite(string(ent.hash))
 	}
 
+	rand.Seed(time.Now().UnixNano())
 	for {
-		buf := make([]byte, 300)
+		buf := make([]byte, entrySize)
 		_, err := rand.Read(buf)
 		if err != nil {
 			log.Error(err.Error())
@@ -208,11 +206,11 @@ func (e *entryPool) fillWithPending(b *block) {
 		err = b.add(ent)
 		if err == errFullBlock {
 			return
+		} else if err == nil {
+			e.replaceRandomPending(ent)
+			e.addFavorite(string(ent.hash))
 		} else {
-			err := e.addPending(ent)
-			if err != nil {
-				log.Error(err.Error())
-			}
+			log.Error(err.Error())
 		}
 	}
 }

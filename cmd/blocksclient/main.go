@@ -18,7 +18,8 @@ import (
 func main() {
 	var caAddr, entry, vizAddr, expAddr string
 	var logging bool
-	var hosts, blockPeriod uint
+	var hosts, blockPeriod, blockSize, entrySize uint
+	var forkLimit float64
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -30,6 +31,9 @@ func main() {
 	args.BoolVar(&logging, "log", false, "Bool deciding whether to log")
 	args.UintVar(&hosts, "hosts", 0, "How many participants in experiment")
 	args.UintVar(&blockPeriod, "btime", 10, "Period between block chosing")
+	args.Float64Var(&forkLimit, "flimit", 0.60, "Limit for forking")
+	args.UintVar(&blockSize, "blocksize", 25, "Block size in KB")
+	args.UintVar(&entrySize, "entrysize", 1024, "Entry size in bytes")
 	args.Parse(os.Args[1:])
 
 	r := log.Root()
@@ -63,7 +67,7 @@ func main() {
 		VisAddr:    vizAddr,
 	}
 
-	c, err := blocks.NewClient(conf, uint32(hosts), uint32(blockPeriod), expAddr)
+	c, err := blocks.NewClient(conf, forkLimit, uint32(blockPeriod), uint32(blockSize), uint32(entrySize), expAddr)
 	if err != nil {
 		log.Error(err.Error())
 		panic(err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 
@@ -29,17 +30,22 @@ type state struct {
 
 	ifrit *ifrit.Client
 
+	forkBlock  *block
+	createFork bool
+
+	forked    bool
+	forkLimit float64
+
 	// DO NOT SET TO TRUE, only for skipping signature checks in test code
 	skipSignatures bool
 
 	// Experiments only
-	prevRoundNumber        uint32
-	convergeMap            map[string]uint32
-	converged              bool
-	experimentParticipants uint32
+	prevRoundNumber uint32
+	convergeMap     map[string]uint32
+	converged       bool
 }
 
-func newState(ifrit *ifrit.Client, httpAddr string, hosts uint32) *state {
+func newState(ifrit *ifrit.Client, httpAddr string, forkLimit float64) *state {
 	peerMap := make(map[string]*peer)
 	localPeer := &peer{
 		id:       ifrit.Id(),
@@ -48,14 +54,51 @@ func newState(ifrit *ifrit.Client, httpAddr string, hosts uint32) *state {
 	peerMap[localPeer.id] = localPeer
 
 	return &state{
-		peerMap:    peerMap,
-		pool:       newEntryPool(),
-		localPeer:  localPeer,
-		inProgress: createBlock(nil),
-		ifrit:      ifrit,
-		experimentParticipants: hosts,
-		convergeMap:            make(map[string]uint32),
+		peerMap:     peerMap,
+		pool:        newEntryPool(blockSize * 10),
+		localPeer:   localPeer,
+		inProgress:  createBlock(nil),
+		ifrit:       ifrit,
+		convergeMap: make(map[string]uint32),
+		forkLimit:   forkLimit,
 	}
+}
+
+func (s *state) randomPeerInMajority() []byte {
+	s.RLock()
+	defer s.RUnlock()
+
+	var retId string
+	var majority int
+
+	overview := make(map[string]int)
+
+	for _, p := range s.peerMap {
+		key := string(p.getPrevHash())
+
+		if _, ok := overview[key]; !ok {
+			overview[key] = 1
+		} else {
+			overview[key]++
+		}
+
+		if num := overview[key]; num > majority {
+			majority = num
+			retId = p.id
+		}
+
+	}
+
+	return []byte(retId)
+}
+
+func (s *state) changePrev(prevHash []byte) {
+	s.Lock()
+	defer s.Unlock()
+
+	s.localPeer.epoch++
+	s.inProgress.prevHash = prevHash
+	s.updateLocalPeer(s.localPeer.getRootHash(), prevHash, s.localPeer.getEntries())
 }
 
 func (s *state) bytes() ([]byte, error) {
@@ -123,9 +166,10 @@ func (s *state) peersDiff(peers map[string]*blockchain.PeerInfo) []*blockchain.P
 
 func (s *state) mergePeers(peers []*blockchain.PeerState) {
 	var favourites []*peer
+
 	blockVotes := make(map[string]int)
 
-	numVotes := 0
+	var diffPrev, numVotes int
 
 	for _, p := range peers {
 		if p.GetId() == s.localPeer.id {
@@ -135,11 +179,17 @@ func (s *state) mergePeers(peers []*blockchain.PeerState) {
 	}
 
 	for _, p := range s.peerMap {
+		if p.getRootHash() == nil {
+			continue
+		}
+
 		// We do not consider peers with different previous blocks,
 		// risk of creating a fork.
 		if eq := bytes.Equal(s.localPeer.getPrevHash(), p.getPrevHash()); !eq {
+			diffPrev++
 			continue
 		}
+
 		key := string(p.getRootHash())
 
 		if _, exists := blockVotes[key]; !exists {
@@ -157,12 +207,25 @@ func (s *state) mergePeers(peers []*blockchain.PeerState) {
 			} else if votes == numVotes {
 				favourites = append(favourites, p)
 			}
+
 		}
 	}
 
 	//log.Debug("Block voting", "Options", len(blockVotes), "Favourites", len(favourites))
 
 	log.Debug("Convergence progress", "ifrit_alive", len(s.ifrit.Members()), "peerMap", len(s.peerMap), "votes", numVotes)
+
+	if diffPrev >= int(float64(len(s.ifrit.Members()))*s.forkLimit) && !s.shouldFork() {
+		s.setForked(true)
+		log.Error("fork detected", "diff", diffPrev, "members", len(s.ifrit.Members()))
+	} else {
+		s.setForked(false)
+	}
+
+	if s.shouldFork() {
+		s.localPeer.addBlock(s.forkBlock)
+		return
+	}
 
 	if numFavs := len(favourites); numFavs >= 1 {
 		idx := 0
@@ -195,8 +258,6 @@ func (s *state) mergePeers(peers []*blockchain.PeerState) {
 		k := string(favPeer.getRootHash())
 		s.convergeMap[k] = (s.ifrit.GetGossipRounds() - s.prevRoundNumber)
 	}
-	//log.Debug("New favourite block", "rootHash", string(favPeer.getRootHash()), "prevHash", string(favPeer.getPrevHash()))
-	//log.Debug("Convergence progress", "ifrit_alive", participants, "peerMap", len(s.peerMap), "votes", numVotes)
 }
 
 func (s *state) mergePeer(p *blockchain.PeerState) {
@@ -371,6 +432,7 @@ func (s *state) newRound() (*block, []byte) {
 	}
 
 	s.pool.resetMissing()
+	s.pool.resetFavorite()
 
 	s.inProgress = createBlock(new.getRootHash())
 
@@ -485,4 +547,64 @@ func (s *state) getConvergeValue(hash string) []byte {
 	}
 
 	return b.Bytes()
+}
+
+func (s *state) setForked(state bool) {
+	s.forked = state
+}
+
+func (s *state) isForked() bool {
+	s.RLock()
+	defer s.RUnlock()
+
+	return s.forked
+}
+
+func (s *state) shouldFork() bool {
+	return s.createFork
+}
+
+func (s *state) startFork(prevHash []byte) {
+	s.Lock()
+	defer s.Unlock()
+
+	s.forkBlock = createBlock(prevHash)
+
+	rand.Seed(time.Now().UnixNano())
+	for {
+		buf := make([]byte, entrySize)
+		_, err := rand.Read(buf)
+		if err != nil {
+			log.Error(err.Error())
+			continue
+		}
+
+		e := &entry{
+			data: buf,
+			hash: hashBytes(buf),
+		}
+
+		err = s.forkBlock.add(e)
+		if err == errFullBlock {
+			break
+		}
+	}
+
+	s.createFork = true
+}
+
+func (s *state) stopFork() {
+	s.Lock()
+	defer s.Unlock()
+
+	s.createFork = false
+}
+
+func (s *state) removeEntries(b *block) {
+	s.Lock()
+	defer s.Unlock()
+
+	for _, e := range b.entries {
+		s.pool.removeConfirmed(string(e.hash))
+	}
 }

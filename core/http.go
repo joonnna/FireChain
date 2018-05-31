@@ -36,6 +36,8 @@ func (c *Chain) startHttp() {
 	r.HandleFunc("/state", c.stateHandler)
 	r.HandleFunc("/hosts", c.hostsHandler)
 	r.HandleFunc("/exp", c.expHandler)
+	r.HandleFunc("/fork", c.forkHandler)
+	r.HandleFunc("/stopfork", c.stopForkHandler)
 
 	err := http.Serve(c.httpListener, r)
 	if err != nil {
@@ -84,6 +86,30 @@ func (c *Chain) expHandler(w http.ResponseWriter, r *http.Request) {
 	if !c.isExp() {
 		close(c.ExpChan)
 	}
+}
+
+func (c *Chain) forkHandler(w http.ResponseWriter, r *http.Request) {
+	io.Copy(ioutil.Discard, r.Body)
+	r.Body.Close()
+
+	curr := c.getCurrBlock()
+
+	if curr == nil {
+		return
+	}
+
+	log.Info("Starting fork")
+
+	c.state.startFork(curr.getPrevHash())
+}
+
+func (c *Chain) stopForkHandler(w http.ResponseWriter, r *http.Request) {
+	io.Copy(ioutil.Discard, r.Body)
+	r.Body.Close()
+
+	log.Info("Stopping fork")
+
+	c.state.stopFork()
 }
 
 func (c *Chain) getChain() ([]byte, error) {

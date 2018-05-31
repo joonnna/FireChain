@@ -27,6 +27,7 @@ var (
 	errNoLocalPeer        = errors.New("Can't find local peer representation")
 	errNoMsgContent       = errors.New("Message content is either nil or of zero length")
 	ErrNoData             = errors.New("Given data is of zero length")
+	errNoChainState       = errors.New("No chain state in request")
 )
 
 type Chain struct {
@@ -46,6 +47,8 @@ type Chain struct {
 	httpListener net.Listener
 
 	exitChan chan bool
+
+	forkCheckTimeout time.Duration
 
 	// Experiments only
 	saturationTimeout time.Duration
@@ -74,25 +77,25 @@ type test interface {
 */
 
 func (c *Chain) fillFirstBlock() {
-	for i := 0; i < 5; i++ {
-		buf := make([]byte, 300)
+	rand.Seed(time.Now().UnixNano())
+	for i := 0; i < int(blockSize/entrySize)+1; i++ {
+		buf := make([]byte, entrySize)
 		_, err := rand.Read(buf)
 		if err != nil {
-			fmt.Println(err)
+			log.Error(err.Error())
 			continue
 		}
 		err = c.Add(buf)
 		if err != nil {
-			break
+			log.Error(err.Error())
+			continue
 		}
 	}
 }
 
-func NewChain(conf *ifrit.Config, hosts, blockPeriod uint32, expAddr string) (*Chain, error) {
-	i, err := ifrit.NewClient(conf)
-	if err != nil {
-		return nil, err
-	}
+func NewChain(conf *ifrit.Config, expAddr string, forkLimit float64, blockPeriod, bSize, eSize uint32) (*Chain, error) {
+	entrySize = eSize
+	blockSize = bSize * 1024
 
 	l, err := initHttp()
 	if err != nil {
@@ -103,22 +106,29 @@ func NewChain(conf *ifrit.Config, hosts, blockPeriod uint32, expAddr string) (*C
 	port := strings.Split(l.Addr().String(), ":")[1]
 	httpAddr := fmt.Sprintf("%s:%s", ip, port)
 
+	conf.VisAppAddr = fmt.Sprintf("http://%s", httpAddr)
+	i, err := ifrit.NewClient(conf)
+	if err != nil {
+		return nil, err
+	}
+
 	exp := false
 	if expAddr != "" {
 		exp = true
 	}
 
 	return &Chain{
-		blocks:       make(map[uint64]*block),
-		state:        newState(i, httpAddr, hosts),
-		ifrit:        i,
-		httpListener: l,
-		exitChan:     make(chan bool),
-		blockPeriod:  time.Minute * time.Duration(blockPeriod),
-		ExpChan:      make(chan bool),
-		experiment:   exp,
-		expAddr:      expAddr,
-		httpAddr:     httpAddr,
+		blocks:           make(map[uint64]*block),
+		state:            newState(i, httpAddr, forkLimit),
+		ifrit:            i,
+		httpListener:     l,
+		exitChan:         make(chan bool),
+		blockPeriod:      time.Minute * time.Duration(blockPeriod),
+		ExpChan:          make(chan bool),
+		experiment:       exp,
+		expAddr:          expAddr,
+		httpAddr:         httpAddr,
+		forkCheckTimeout: time.Minute * 1,
 	}, nil
 }
 
@@ -131,6 +141,9 @@ func (c *Chain) Start() {
 	c.ifrit.RecordGossipRounds()
 	c.ifrit.RegisterGossipHandler(c.handleMsg)
 	c.ifrit.RegisterResponseHandler(c.handleResponse)
+	c.ifrit.RegisterResponseHandler(c.handleResponse)
+	c.ifrit.RegisterMsgHandler(c.handleForkMsg)
+	go c.forkResolver()
 	c.blockLoop()
 }
 
@@ -215,6 +228,147 @@ func (c *Chain) handleResponse(resp []byte) {
 	c.updateState()
 }
 
+func (c *Chain) forkResolver() {
+	for {
+		select {
+		case <-c.exitChan:
+			return
+		case <-time.After(c.forkCheckTimeout):
+			if c.state.isForked() {
+				log.Info("Sending fork request")
+				id := c.state.randomPeerInMajority()
+
+				msg, err := c.fullChain()
+				if err != nil {
+					log.Error(err.Error())
+					continue
+				}
+
+				ch, err := c.ifrit.SendToId(id, msg)
+				if err != nil {
+					log.Error(err.Error())
+					continue
+				}
+
+				resp := <-ch
+
+				c.mergeChains(resp)
+			}
+		}
+	}
+}
+
+func (c *Chain) fullChain() ([]byte, error) {
+	c.blockMapMutex.RLock()
+	defer c.blockMapMutex.RUnlock()
+
+	state := &blockchain.ChainState{
+		Blocks: make(map[uint64]*blockchain.BlockHeader),
+	}
+
+	for _, b := range c.blocks {
+		header := &blockchain.BlockHeader{
+			RootHash: b.getRootHash(),
+			PrevHash: b.getPrevHash(),
+			BlockNum: b.num,
+		}
+		state.Blocks[b.num] = header
+	}
+
+	return proto.Marshal(state)
+}
+
+func (c *Chain) handleForkMsg(msg []byte) ([]byte, error) {
+	c.blockMapMutex.RLock()
+	defer c.blockMapMutex.RUnlock()
+
+	var err error
+	var i uint64
+	var response []byte
+
+	log.Info("Got fork merge request")
+
+	content := &blockchain.ChainState{}
+
+	err = proto.Unmarshal(msg, content)
+	if err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+
+	remoteBlocks := content.GetBlocks()
+	if remoteBlocks == nil {
+		return nil, errNoChainState
+	}
+
+	for i = 1; i <= c.currBlock; i++ {
+		localBlock := c.blocks[i]
+
+		if b, ok := remoteBlocks[i]; !ok || !localBlock.cmpRootHash(b.GetRootHash()) {
+			log.Info("Found fork point", "blocknum", i, "currblock", c.currBlock)
+			response, err = c.partialChain(i)
+			if err != nil {
+				log.Error(err.Error())
+				return nil, err
+			}
+			break
+		}
+	}
+
+	return response, nil
+}
+
+func (c *Chain) partialChain(start uint64) ([]byte, error) {
+	ret := &blockchain.ChainContent{}
+
+	for i := start; i <= c.currBlock; i++ {
+		if b, ok := c.blocks[i]; !ok {
+			log.Error("Block not present in chain")
+			continue
+		} else {
+			content := &blockchain.BlockContent{
+				RootHash: b.getRootHash(),
+				PrevHash: b.getPrevHash(),
+				Content:  b.content(),
+				BlockNum: b.num,
+			}
+			ret.Blocks = append(ret.Blocks, content)
+		}
+	}
+
+	return proto.Marshal(ret)
+}
+
+func (c *Chain) mergeChains(msg []byte) {
+	c.blockMapMutex.Lock()
+	defer c.blockMapMutex.Unlock()
+
+	var blocks []*block
+	content := &blockchain.ChainContent{}
+
+	err := proto.Unmarshal(msg, content)
+	if err != nil {
+		log.Error(err.Error())
+		return
+	}
+
+	for _, b := range content.GetBlocks() {
+		newBlock, err := createBlockWithContent(b.GetPrevHash(), b.GetContent())
+		if err != nil {
+			log.Error(err.Error())
+			return
+		}
+
+		newBlock.num = b.GetBlockNum()
+
+		blocks = append(blocks, newBlock)
+	}
+
+	prev := c.replaceChain(blocks)
+
+	c.state.changePrev(prev)
+}
+
 func (c *Chain) blockLoop() {
 	for {
 		select {
@@ -254,6 +408,24 @@ func (c *Chain) updateState() {
 	c.ifrit.SetGossipContent(bytes)
 }
 
+func (c *Chain) replaceChain(blocks []*block) []byte {
+	for _, b := range blocks {
+		if currBlock, ok := c.blocks[b.num]; !ok {
+			c.state.removeEntries(currBlock)
+		} else {
+			log.Error("Did not have block", "number", b.num)
+		}
+
+		c.blocks[b.num] = b
+
+		if b.num > c.currBlock {
+			c.currBlock = b.num
+		}
+	}
+
+	return c.blocks[c.currBlock].getRootHash()
+}
+
 func (c *Chain) addBlock(b *block) error {
 	c.blockMapMutex.Lock()
 	defer c.blockMapMutex.Unlock()
@@ -263,6 +435,7 @@ func (c *Chain) addBlock(b *block) error {
 	}
 
 	c.currBlock++
+	b.num = c.currBlock
 	c.blocks[c.currBlock] = b
 
 	return nil

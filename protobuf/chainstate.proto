@@ -14,12 +14,14 @@ message BlockEntry {
 message BlockHeader {
     bytes rootHash = 1;
     bytes prevHash = 2;
+    uint64 blockNum = 3;
 }
 
 message BlockContent {
     bytes rootHash = 1;
     bytes prevHash = 2;
     repeated bytes content = 3;
+    uint64 blockNum = 4;
 }
 
 message Signature {
@@ -55,6 +57,14 @@ message State {
 message StateResponse {
     repeated PeerState peers = 1;
     repeated BlockEntry entries = 2;
+}
+
+message ChainState {
+    map<uint64, BlockHeader> blocks = 1;
+}
+
+message ChainContent {
+    repeated BlockContent blocks = 1;
 }
 
 message WormPayload {

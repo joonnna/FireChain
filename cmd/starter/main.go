@@ -1,15 +1,13 @@
 package main
 
 import (
-	"crypto/rand"
 	"flag"
 	"fmt"
-	mrand "math/rand"
+	"math/rand"
 	"os"
 	"os/signal"
 	"runtime"
 	"syscall"
-	"time"
 
 	_ "net/http/pprof"
 
@@ -31,7 +29,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string,
 		case <-requestChan:
 			var addrs []string
 			if length := len(clients); length > 0 {
-				idx := mrand.Int() % length
+				idx := rand.Int() % length
 				addrs = append(addrs, clients[idx])
 			}
 
@@ -42,7 +40,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string,
 				CaAddr:     ca,
 			}
 
-			c, err := blocks.NewClient(conf, 10, 5, "")
+			c, err := blocks.NewClient(conf, 0.60, 2, 25, 1024, "")
 			if err != nil {
 				fmt.Println(err)
 				continue
@@ -50,8 +48,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string,
 
 			clients = append(clients, c.Addr())
 
-			fillFirstBlock(c)
-			go addPeriodically(c)
+			c.StartExp()
 
 			requestChan <- c
 		case <-exitChan:
@@ -61,6 +58,7 @@ func createClients(requestChan chan interface{}, exitChan chan bool, viz string,
 	}
 }
 
+/*
 func addPeriodically(c *blocks.Client) {
 	for {
 		time.Sleep(time.Second * 10)
@@ -73,10 +71,10 @@ func addPeriodically(c *blocks.Client) {
 		c.Add(buf)
 	}
 }
-
 func fillFirstBlock(c *blocks.Client) {
-	for i := 0; i < 5; i++ {
-		buf := make([]byte, 300)
+	rand.Seed(time.Now().UnixNano())
+	for i := 0; i < 1000; i++ {
+		buf := make([]byte, 1000)
 		_, err := rand.Read(buf)
 		if err != nil {
 			fmt.Println(err)
@@ -88,6 +86,7 @@ func fillFirstBlock(c *blocks.Client) {
 		}
 	}
 }
+*/
 
 func main() {
 	var numRings uint
